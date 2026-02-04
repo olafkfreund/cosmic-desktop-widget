@@ -1,7 +1,7 @@
 // COSMIC Desktop Widget - Wayland Layer Shell Implementation
 // A true desktop widget that lives on your desktop background
 
-use anyhow::Result;
+use anyhow::{Result, Context};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_shm,
@@ -17,20 +17,22 @@ use smithay_client_toolkit::{
     },
     shm::{Shm, ShmHandler},
 };
+use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use wayland_client::{
     globals::registry_queue_init,
-    protocol::{wl_output, wl_shm, wl_surface},
+    protocol::{wl_output, wl_surface},
     Connection, QueueHandle,
 };
+use std::time::Duration;
 
-mod config;
-mod render;
-mod wayland;
-mod widget;
-
-use config::Config;
-use render::Renderer;
-use widget::{ClockWidget, WeatherWidget};
+use cosmic_desktop_widget::{
+    config::Config,
+    metrics::{Timer, WidgetMetrics, TARGET_RENDER_TIME_MS},
+    render::Renderer,
+    update::UpdateScheduler,
+    wayland,
+    widget::{ClockWidget, WeatherWidget},
+};
 
 /// Main application state
 struct DesktopWidget {
@@ -53,10 +55,16 @@ struct DesktopWidget {
     // Widget data
     clock_widget: ClockWidget,
     weather_widget: WeatherWidget,
-    
+
+    // Update coordination
+    update_scheduler: UpdateScheduler,
+
     // Configuration
     config: Config,
-    
+
+    // Performance metrics
+    metrics: WidgetMetrics,
+
     // State
     configured: bool,
 }
@@ -163,6 +171,9 @@ impl DesktopWidget {
         layer_shell: LayerShell,
         config: Config,
     ) -> Self {
+        // Get theme from config
+        let theme = config.get_theme();
+
         Self {
             registry_state,
             output_state,
@@ -170,13 +181,27 @@ impl DesktopWidget {
             shm_state,
             layer_shell,
             layer: None,
-            renderer: Renderer::new(),
+            renderer: Renderer::with_theme(theme),
             width: config.width,
             height: config.height,
             buffer_pool: None,
-            clock_widget: ClockWidget::new(),
-            weather_widget: WeatherWidget::new(&config.weather_city, &config.weather_api_key),
+            clock_widget: ClockWidget::new(
+                &config.clock_format,
+                config.show_seconds,
+                config.show_date,
+            ),
+            weather_widget: WeatherWidget::new(
+                &config.weather_city,
+                &config.weather_api_key,
+                &config.temperature_unit,
+                config.update_interval,
+            ),
+            update_scheduler: UpdateScheduler::new(
+                Duration::from_secs(1),              // Clock updates every second
+                Duration::from_secs(config.update_interval), // Weather from config
+            ),
             config,
+            metrics: WidgetMetrics::new(),
             configured: false,
         }
     }
@@ -228,41 +253,110 @@ impl DesktopWidget {
             return;
         };
 
-        // Update widgets
-        self.clock_widget.update();
-        self.weather_widget.update();
+        // Check which widgets need updating
+        let flags = self.update_scheduler.check_updates();
+
+        // Only update widgets that need it
+        if flags.clock {
+            self.clock_widget.update();
+        }
+        if flags.weather {
+            self.weather_widget.update();
+        }
+
+        // Only redraw if something changed
+        if !flags.needs_redraw() {
+            return;
+        }
 
         // Create buffer pool if needed
         if self.buffer_pool.is_none() {
-            self.buffer_pool = Some(
-                wayland::BufferPool::new(
-                    self.width,
-                    self.height,
-                    &self.shm_state,
-                    qh,
-                )
-                .expect("Failed to create buffer pool"),
-            );
+            match wayland::BufferPool::new(
+                self.width,
+                self.height,
+                &self.shm_state,
+                qh,
+            ) {
+                Ok(pool) => {
+                    self.buffer_pool = Some(pool);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        width = self.width,
+                        height = self.height,
+                        "Failed to create buffer pool, skipping frame"
+                    );
+                    return;
+                }
+            }
         }
 
-        let pool = self.buffer_pool.as_mut().unwrap();
-        let (buffer, canvas) = pool.get_buffer().expect("Failed to get buffer");
+        let pool = self.buffer_pool.as_mut()
+            .expect("Buffer pool must exist after creation check");
+        let (buffer, canvas) = match pool.get_buffer() {
+            Ok(buf) => buf,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to get buffer, skipping frame");
+                return;
+            }
+        };
 
-        // Render the widget
+        // Render the widget - pass Option based on config settings
+        let clock_opt = if self.config.show_clock {
+            Some(&self.clock_widget)
+        } else {
+            None
+        };
+        let weather_opt = if self.config.show_weather {
+            Some(&self.weather_widget)
+        } else {
+            None
+        };
+
+        // Time the render operation
+        let render_timer = Timer::start();
+
         self.renderer.render(
             canvas,
             self.width,
             self.height,
-            &self.clock_widget,
-            &self.weather_widget,
+            clock_opt,
+            weather_opt,
             &self.config,
         );
+
+        // Record render metrics
+        let render_time = render_timer.stop();
+        self.metrics.render.record_render(render_time);
+
+        // Log warning if over frame budget
+        if render_time.as_millis() > TARGET_RENDER_TIME_MS as u128 {
+            tracing::warn!(
+                render_ms = %render_time.as_secs_f64() * 1000.0,
+                target_ms = %TARGET_RENDER_TIME_MS,
+                "Render exceeded frame budget"
+            );
+        } else {
+            tracing::trace!(
+                render_ms = %render_time.as_secs_f64() * 1000.0,
+                "Render complete"
+            );
+        }
+
+        // Periodically log metrics summary
+        self.metrics.maybe_log_summary();
 
         // Attach buffer and commit
         layer
             .wl_surface()
             .damage_buffer(0, 0, self.width as i32, self.height as i32);
-        layer.wl_surface().attach(Some(buffer), 0, 0);
+
+        if let Err(e) = buffer.attach_to(layer.wl_surface()) {
+            tracing::error!(error = %e, "Failed to attach buffer to surface");
+            return;
+        }
+
         layer.wl_surface().commit();
     }
 }
@@ -297,23 +391,23 @@ fn main() -> Result<()> {
 
     // Connect to Wayland
     let conn = Connection::connect_to_env()
-        .expect("Failed to connect to Wayland compositor");
-    
+        .context("Failed to connect to Wayland compositor. Is a Wayland compositor running?")?;
+
     tracing::info!("Connected to Wayland");
 
-    let (globals, mut event_queue) = registry_queue_init(&conn)
-        .expect("Failed to initialize registry");
+    let (globals, event_queue) = registry_queue_init(&conn)
+        .context("Failed to initialize Wayland registry")?;
     let qh = event_queue.handle();
 
     // Initialize Wayland states
     let registry_state = RegistryState::new(&globals);
     let output_state = OutputState::new(&globals, &qh);
     let compositor_state = CompositorState::bind(&globals, &qh)
-        .expect("wl_compositor not available");
+        .context("wl_compositor protocol not available. Your compositor may not support required Wayland protocols.")?;
     let shm_state = Shm::bind(&globals, &qh)
-        .expect("wl_shm not available");
+        .context("wl_shm protocol not available. Shared memory buffers are required.")?;
     let layer_shell = LayerShell::bind(&globals, &qh)
-        .expect("layer_shell not available");
+        .context("zwlr_layer_shell_v1 not available. Your compositor must support the Layer Shell protocol.")?;
 
     let mut widget = DesktopWidget::new(
         registry_state,
@@ -329,52 +423,49 @@ fn main() -> Result<()> {
 
     // Setup event loop
     let mut event_loop = calloop::EventLoop::<DesktopWidget>::try_new()
-        .expect("Failed to create event loop");
+        .context("Failed to create event loop")?;
 
-    // Add Wayland source
-    let _wayland_source = calloop::generic::Generic::new(
-        event_queue.display().get_connection_fd(),
-        calloop::Interest::READ,
-        calloop::Mode::Level,
-    );
+    // Add Wayland source using WaylandSource
+    WaylandSource::new(conn.clone(), event_queue)
+        .insert(event_loop.handle())
+        .context("Failed to insert Wayland event source into event loop")?;
 
-    // Timer for periodic updates (every second)
-    let timer = calloop::timer::Timer::new()
-        .expect("Failed to create timer");
-    let timer_handle = timer.handle();
+    // Timer for periodic updates - updates happen during draw() calls
+    // This timer just ensures we wake up to check for updates
+    let timer = calloop::timer::Timer::from_duration(Duration::from_millis(100));
     event_loop
         .handle()
         .insert_source(timer, |_deadline, _metadata, widget| {
-            widget.clock_widget.update();
-            // Trigger redraw if needed
-            calloop::timer::TimeoutAction::ToDuration(std::time::Duration::from_secs(1))
+            // The actual update logic is in draw() which checks the scheduler
+            // This just ensures we wake up periodically
+            // Calculate time until next check
+            let next_check = widget.update_scheduler.time_until_next_update();
+            calloop::timer::TimeoutAction::ToDuration(next_check.max(Duration::from_millis(100)))
         })
-        .expect("Failed to insert timer");
-    
-    timer_handle.add_timeout(std::time::Duration::from_secs(1), ());
+        .map_err(|e| anyhow::anyhow!("Failed to insert timer source: {:?}", e))?;
 
     // Signal handling for graceful shutdown
     let signals = calloop::signals::Signals::new(&[calloop::signals::Signal::SIGINT])
-        .expect("Failed to create signal source");
+        .context("Failed to create signal handler for graceful shutdown")?;
     event_loop
         .handle()
         .insert_source(signals, |_signal, _metadata, _widget| {
-            tracing::info!("Received SIGINT, exiting");
+            tracing::info!("Received SIGINT, exiting gracefully");
             std::process::exit(0);
         })
-        .expect("Failed to insert signal source");
+        .map_err(|e| anyhow::anyhow!("Failed to insert signal handler: {:?}", e))?;
 
     tracing::info!("Event loop starting");
 
-    // Main loop
+    // Main loop - WaylandSource handles Wayland events
+    // Add error recovery to prevent crashes on transient errors
     loop {
-        // Dispatch Wayland events
-        event_queue.blocking_dispatch(&mut widget)
-            .expect("Failed to dispatch events");
-
-        // Dispatch event loop
-        event_loop
-            .dispatch(std::time::Duration::from_millis(16), &mut widget)
-            .expect("Failed to dispatch event loop");
+        if let Err(e) = event_loop.dispatch(Duration::from_millis(16), &mut widget) {
+            tracing::error!(error = %e, "Event loop dispatch error");
+            // For critical errors, we should exit
+            // For transient errors, we could continue
+            // Currently, we exit on any error as most are fatal
+            return Err(e.into());
+        }
     }
 }

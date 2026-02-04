@@ -1,9 +1,9 @@
 // Wayland buffer pool for shared memory rendering
 
-use anyhow::{Context, Result};
-use smithay_client_toolkit::shm::{Shm, slot::SlotPool};
-use wayland_client::{protocol::wl_buffer::WlBuffer, QueueHandle};
-use std::io::Write;
+use crate::error::Result;
+use smithay_client_toolkit::shm::{Shm, slot::{Buffer, SlotPool}};
+use tracing::{debug, info};
+use wayland_client::QueueHandle;
 
 pub struct BufferPool {
     pool: SlotPool,
@@ -16,16 +16,23 @@ impl BufferPool {
         width: u32,
         height: u32,
         shm: &Shm,
-        qh: &QueueHandle<T>,
+        _qh: &QueueHandle<T>,
     ) -> Result<Self>
     where
         T: 'static,
     {
-        let pool = SlotPool::new(
-            (width * height * 4) as usize * 2, // Double buffering
-            shm,
-        )
-        .context("Failed to create slot pool")?;
+        let buffer_size = (width * height * 4) as usize * 2; // Double buffering
+        info!(
+            width = %width,
+            height = %height,
+            buffer_size = %buffer_size,
+            "Creating buffer pool"
+        );
+
+        let pool = SlotPool::new(buffer_size, shm)
+            .map_err(|e| crate::error::WidgetError::BufferCreation(format!("Failed to create slot pool: {}", e)))?;
+
+        debug!("Buffer pool created successfully");
 
         Ok(Self {
             pool,
@@ -34,11 +41,17 @@ impl BufferPool {
         })
     }
 
-    pub fn get_buffer(&mut self) -> Result<(&WlBuffer, &mut [u8])> {
+    pub fn get_buffer(&mut self) -> Result<(Buffer, &mut [u8])> {
         let stride = self.width * 4;
-        let size = stride * self.height;
 
-        let (buffer, canvas) = self
+        debug!(
+            width = %self.width,
+            height = %self.height,
+            stride = %stride,
+            "Retrieving buffer from pool"
+        );
+
+        let (buffer, canvas): (Buffer, &mut [u8]) = self
             .pool
             .create_buffer(
                 self.width as i32,
@@ -46,12 +59,14 @@ impl BufferPool {
                 stride as i32,
                 wayland_client::protocol::wl_shm::Format::Argb8888,
             )
-            .context("Failed to create buffer")?;
+            .map_err(|e| crate::error::WidgetError::BufferCreation(format!("Failed to create buffer: {}", e)))?;
 
         // Clear canvas
-        canvas.chunks_exact_mut(4).for_each(|chunk| {
+        canvas.chunks_exact_mut(4).for_each(|chunk: &mut [u8]| {
             chunk.copy_from_slice(&[0, 0, 0, 0]); // Transparent
         });
+
+        debug!("Buffer retrieved and cleared");
 
         Ok((buffer, canvas))
     }

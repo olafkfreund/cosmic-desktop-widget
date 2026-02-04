@@ -3,9 +3,13 @@ name = "cosmic-desktop-widget"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["olafkfreund <olafkfreund@users.noreply.github.com>"]
 description = "Desktop widgets using Wayland Layer Shell for COSMIC Desktop"
 license = "GPL-3.0-only"
+repository = "https://github.com/olafkfreund/cosmic-desktop-widget"
+homepage = "https://github.com/olafkfreund/cosmic-desktop-widget"
+documentation = "https://github.com/olafkfreund/cosmic-desktop-widget#readme"
+readme = "README.md"
 keywords = ["wayland", "layer-shell", "cosmic", "desktop-widget", "rust"]
 categories = ["gui"]
 
@@ -21,6 +25,7 @@ calloop = { version = "0.12", features = ["signals"] }
 
 # Rendering
 tiny-skia = "0.11"
+fontdue = "0.9"
 
 # Image handling
 image = { version = "0.24", default-features = false, features = ["png"] }
@@ -54,6 +59,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 criterion = "0.5"
+
+[lib]
+name = "cosmic_desktop_widget"
+path = "src/lib.rs"
 
 [[bin]]
 name = "cosmic-desktop-widget"

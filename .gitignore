@@ -2,7 +2,7 @@
 /target
 **/*.rs.bk
 *.pdb
-Cargo.lock
+# Note: Cargo.lock is tracked because this is an application, not a library
 
 # IDE
 .idea/

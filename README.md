@@ -1,98 +1,116 @@
-# COSMIC Desktop Widget 🎨
+# COSMIC Desktop Widget
 
-**True desktop widgets using Wayland Layer Shell protocol**
+A lightweight, configurable desktop widget system for COSMIC Desktop Environment using the Wayland Layer Shell protocol. Widgets live directly on your desktop background - below windows, above wallpaper - just like KDE Plasma widgets or classic Windows desktop gadgets.
 
-A desktop widget system for COSMIC Desktop that uses the Wayland Layer Shell protocol to display widgets directly on your desktop background - like KDE Plasma widgets or Windows desktop gadgets.
+## Features
 
-## 🌟 Features
+- **True Desktop Widgets** - Uses Layer Shell protocol (`zwlr_layer_shell_v1`) to render on desktop background
+- **Clock Widget** - Configurable 12h/24h format with optional seconds and date display
+- **Weather Widget** - OpenWeatherMap integration with Celsius/Fahrenheit support
+- **Theming System** - Three built-in themes (cosmic_dark, light, transparent_dark) plus custom themes
+- **Performance Optimized** - Glyph caching, smart update scheduling, metrics tracking
+- **Flexible Layout** - Vertical/horizontal widget arrangement with configurable padding/spacing
+- **Native Wayland** - Pure Wayland implementation using Smithay Client Toolkit
 
-- ✅ **True Desktop Widgets** - Lives on desktop background using Layer Shell
-- ✅ **Clock Widget** - Real-time clock with customizable format
-- ✅ **Weather Widget** - Current weather conditions (OpenWeatherMap)
-- ✅ **Configurable** - Position, size, and appearance
-- ✅ **Native Wayland** - No X11, pure Wayland implementation
-- ✅ **Lightweight** - Written in Rust with minimal dependencies
-- ✅ **COSMIC Integration** - Designed for COSMIC Desktop Environment
-
-## 🖼️ What It Looks Like
-
-```
-┌──────────────────────────────────┐
-│  14:35:22                        │
-│  London                          │
-│  22°C Sunny | 65% humidity       │
-│  ───────────────────────────────  │
-└──────────────────────────────────┘
-```
-
-This widget floats on your desktop background, positioned where you want it.
-
-## 🏗️ Architecture
-
-This is a **Layer Shell widget**, not a panel applet:
+## How It Works
 
 ```
 Desktop Layer Stack:
-┌─────────────────────────────┐
-│  Overlay Layer              │  <- Lock screens, notifications
-├─────────────────────────────┤
-│  Top Layer                  │  <- On-screen displays
-├─────────────────────────────┤
-│  Regular Windows            │  <- Your applications
-├─────────────────────────────┤
-│  Bottom Layer               │  <- Our widget lives here! ⭐
-├─────────────────────────────┤
-│  Background Layer           │  <- Wallpaper
-└─────────────────────────────┘
++-----------------------------+
+|  Overlay Layer              |  <- Lock screens, notifications
++-----------------------------+
+|  Top Layer                  |  <- On-screen displays
++-----------------------------+
+|  Regular Windows            |  <- Your applications
++-----------------------------+
+|  Bottom Layer               |  <- OUR WIDGET LIVES HERE
++-----------------------------+
+|  Background Layer           |  <- Wallpaper
++-----------------------------+
 ```
 
-## 📋 Requirements
+## Requirements
 
 ### System Requirements
-- **Compositor**: COSMIC Desktop or any Wayland compositor with Layer Shell support
-  - COSMIC ✅
-  - Sway ✅
-  - Hyprland ✅
-  - River ✅
-  - GNOME ❌ (no Layer Shell support)
-  - KDE Plasma ✅
 
-### Build Requirements (NixOS)
-- NixOS with flakes enabled
-- Wayland session running
+- Linux with Wayland compositor supporting Layer Shell protocol
+- Supported compositors:
+  - COSMIC Desktop (recommended)
+  - Sway
+  - Hyprland
+  - River
+  - KDE Plasma (Wayland session)
+  - **Not supported:** GNOME (Mutter lacks Layer Shell support)
 
-### Build Requirements (Other distros)
-- Rust 1.75+
+### Build Requirements
+
+- Rust 1.75 or later
 - Wayland development libraries
 - pkg-config
+- fontconfig and freetype
 
-## 🚀 Quick Start (NixOS)
+## Installation
+
+### From Source
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/your-username/cosmic-desktop-widget
 cd cosmic-desktop-widget
 
-# Enter development shell
-nix develop
+# Build release binary
+cargo build --release
 
-# Check your system supports Layer Shell
-just check-system
-
-# Create default configuration
-just create-config
-
-# Edit config (add weather API key!)
-nano ~/.config/cosmic-desktop-widget/config.toml
-
-# Build and run
-just build
-just run
+# Copy to a location in your PATH
+sudo cp target/release/cosmic-desktop-widget /usr/local/bin/
 ```
 
-## 🔧 Configuration
+### NixOS / Nix
 
-Configuration file: `~/.config/cosmic-desktop-widget/config.toml`
+Add to your flake inputs:
+
+```nix
+{
+  inputs = {
+    cosmic-desktop-widget = {
+      url = "github:your-username/cosmic-desktop-widget";
+    };
+  };
+}
+```
+
+Then include in your packages:
+
+```nix
+environment.systemPackages = [
+  inputs.cosmic-desktop-widget.packages.${system}.default
+];
+```
+
+Or use the development shell:
+
+```bash
+nix develop
+cargo build --release
+```
+
+### Building with Just
+
+If you have `just` installed:
+
+```bash
+just build          # Build debug version
+just build-release  # Build release version
+just run            # Build and run
+just test           # Run test suite
+just check          # Run clippy checks
+```
+
+## Configuration
+
+Configuration is stored in `~/.config/cosmic-desktop-widget/config.toml`. A default configuration is created on first run.
+
+### Basic Configuration
 
 ```toml
 # Widget dimensions
@@ -109,231 +127,300 @@ right = 20
 bottom = 0
 left = 0
 
-# Weather settings
-weather_city = "London"
-weather_api_key = "YOUR_API_KEY_HERE"  # Get from https://openweathermap.org/api
-
-# Update interval in seconds
-update_interval = 600  # 10 minutes
-
-# Display options
+# Clock settings
 show_clock = true
+clock_format = "24h"      # "24h" or "12h"
+show_seconds = true
+show_date = false
+
+# Weather settings
 show_weather = true
+weather_city = "London"
+weather_api_key = ""      # Get from https://openweathermap.org/api
+temperature_unit = "celsius"  # "celsius" or "fahrenheit"
+update_interval = 600     # Weather update interval in seconds
 
-# Clock format: "12h" or "24h"
-clock_format = "24h"
+# Theme: "cosmic_dark", "light", "transparent_dark", or "custom"
+theme = "cosmic_dark"
 
-# Temperature unit: "celsius" or "fahrenheit"
-temperature_unit = "celsius"
+# Layout settings
+padding = 20.0
+spacing = 10.0
 ```
 
-### Getting Weather API Key
+### Getting a Weather API Key
 
-1. Go to https://openweathermap.org/api
-2. Sign up for free account
-3. Get your API key
-4. Add it to config file
+1. Visit [OpenWeatherMap](https://openweathermap.org/api)
+2. Create a free account
+3. Generate an API key
+4. Add it to your config file
 
-## 📖 Usage
+### Custom Theme
+
+To create a custom theme, set `theme = "custom"` and add:
+
+```toml
+theme = "custom"
+
+[custom_theme]
+opacity = 0.9
+border_width = 2.0
+corner_radius = 8.0
+
+[custom_theme.background]
+r = 30
+g = 30
+b = 30
+a = 230
+
+[custom_theme.border]
+r = 100
+g = 100
+b = 100
+a = 255
+
+[custom_theme.text_primary]
+r = 255
+g = 255
+b = 255
+a = 255
+
+[custom_theme.text_secondary]
+r = 180
+g = 180
+b = 180
+a = 255
+
+[custom_theme.accent]
+r = 52
+g = 120
+b = 246
+a = 255
+```
+
+## Usage
+
+### Running the Widget
 
 ```bash
-# Run the widget
-just run
+# Run with default settings
+cosmic-desktop-widget
 
-# Run with debug logging
-just run-debug
+# Run with info logging
+RUST_LOG=info cosmic-desktop-widget
 
-# Check system compatibility
-just check-system
+# Run with debug logging (verbose)
+RUST_LOG=debug cosmic-desktop-widget
 
-# View current config
-just show-config
-
-# Install system-wide
-just install
+# Run with trace logging (very verbose)
+RUST_LOG=trace cosmic-desktop-widget
 ```
 
-## 🎨 Customization
+### Autostart
 
-### Position
+To start the widget automatically:
 
-Choose where the widget appears:
-- `top-left` - Upper left corner
-- `top-right` - Upper right corner (default)
-- `bottom-left` - Lower left corner
-- `bottom-right` - Lower right corner
-- `center` - Center of screen
+**Systemd user service:**
 
-### Size
+Create `~/.config/systemd/user/cosmic-desktop-widget.service`:
 
-Adjust dimensions in config:
-```toml
-width = 500   # Wider widget
-height = 200  # Taller widget
+```ini
+[Unit]
+Description=COSMIC Desktop Widget
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/local/bin/cosmic-desktop-widget
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target
 ```
 
-### Margins
-
-Control distance from screen edges:
-```toml
-[margin]
-top = 50      # 50 pixels from top
-right = 100   # 100 pixels from right
-bottom = 0
-left = 0
-```
-
-## 🔍 How It Works
-
-### Layer Shell Protocol
-
-This widget uses the `zwlr_layer_shell_v1` Wayland protocol:
-
-1. **Connects to Wayland** - Establishes connection to compositor
-2. **Creates Layer Surface** - Requests a surface on the "bottom" layer
-3. **Configures Position** - Sets anchor point and margins
-4. **Renders Content** - Draws widget using shared memory buffers
-5. **Updates Periodically** - Redraws on timer (clock) or interval (weather)
-
-### Technology Stack
-
-- **Wayland**: `smithay-client-toolkit` - Client-side Wayland protocol handling
-- **Rendering**: `tiny-skia` - 2D graphics rendering
-- **Event Loop**: `calloop` - Async event loop for Wayland events
-- **Weather**: `reqwest` - HTTP client for OpenWeatherMap API
-- **Config**: `toml` - Configuration file parsing
-
-## 🐛 Troubleshooting
-
-### Widget Doesn't Appear
+Then enable it:
 
 ```bash
-# Check Wayland is running
-echo $WAYLAND_DISPLAY  # Should output something like "wayland-0"
-
-# Check Layer Shell support
-just check-layer-shell
-
-# Run with debug logging
-RUST_LOG=debug just run
+systemctl --user enable --now cosmic-desktop-widget
 ```
+
+## Architecture
+
+```
+cosmic-desktop-widget/
++-- src/
+|   +-- main.rs              # Entry point, Layer Shell setup, event loop
+|   +-- lib.rs               # Library exports
+|   +-- config/mod.rs        # Configuration loading and validation
+|   +-- theme/mod.rs         # Theme definitions and color handling
+|   +-- widget/mod.rs        # Clock and Weather widget implementations
+|   +-- render/mod.rs        # tiny-skia based rendering pipeline
+|   +-- layout/mod.rs        # Widget positioning and layout calculations
+|   +-- text/                # Text rendering with fontdue
+|   |   +-- mod.rs
+|   |   +-- font.rs          # Font loading
+|   |   +-- renderer.rs      # Text rendering
+|   |   +-- glyph_cache.rs   # Glyph caching for performance
+|   +-- wayland/mod.rs       # Buffer pool and shared memory management
+|   +-- update/mod.rs        # Smart update scheduling
+|   +-- metrics/mod.rs       # Performance metrics tracking
+|   +-- weather/mod.rs       # Weather API integration
+|   +-- error.rs             # Error types
++-- tests/
+|   +-- integration_tests.rs # Integration test suite
++-- docs/
+|   +-- CONFIGURATION.md     # Detailed configuration reference
+|   +-- ARCHITECTURE.md      # System architecture documentation
++-- Cargo.toml               # Dependencies
++-- flake.nix                # NixOS build configuration
++-- justfile                 # Build automation
++-- CHANGELOG.md             # Version history
+```
+
+## Troubleshooting
+
+### Widget Does Not Appear
+
+1. **Check Wayland is running:**
+   ```bash
+   echo $WAYLAND_DISPLAY  # Should output "wayland-0" or similar
+   ```
+
+2. **Check Layer Shell support:**
+   ```bash
+   # Look for zwlr_layer_shell in protocol list
+   wayland-info | grep layer_shell
+   ```
+
+3. **Run with debug logging:**
+   ```bash
+   RUST_LOG=debug cosmic-desktop-widget
+   ```
 
 ### Weather Not Showing
 
-1. Check API key is set in config
+1. Verify API key is set in config
 2. Check internet connection
-3. View logs for errors:
+3. Verify city name is correct (use English names)
+4. Check logs for API errors:
    ```bash
-   RUST_LOG=debug just run
+   RUST_LOG=debug cosmic-desktop-widget 2>&1 | grep -i weather
    ```
 
 ### Widget Position Wrong
 
-1. Check compositor supports Layer Shell anchors
-2. Try different position in config:
-   ```toml
-   position = "top-left"  # Try different corner
+1. Check `position` value is one of: `top-left`, `top-right`, `bottom-left`, `bottom-right`, `center`
+2. Verify margins are correct in config
+3. Some compositors may handle Layer Shell anchoring differently
+
+### High CPU Usage
+
+1. Check update interval is not too low (minimum recommended: 60 seconds)
+2. Enable metrics logging to diagnose:
+   ```bash
+   RUST_LOG=debug cosmic-desktop-widget
+   ```
+3. Performance metrics are logged every 60 seconds
+
+### Font Not Rendering
+
+1. Ensure system fonts are installed (DejaVu Sans, Liberation Sans, or Noto Sans)
+2. Check fontconfig is properly configured
+3. Run with trace logging to see font loading:
+   ```bash
+   RUST_LOG=trace cosmic-desktop-widget 2>&1 | grep -i font
    ```
 
-### Compositor Not Supported
+## Performance
 
-Layer Shell is supported by:
-- ✅ COSMIC Desktop
-- ✅ Sway
-- ✅ Hyprland
-- ✅ River
-- ❌ GNOME (Mutter doesn't support Layer Shell)
+### Targets
 
-## 🏗️ Development
+- **Idle CPU:** < 0.1%
+- **Active CPU:** < 1%
+- **Memory:** < 50 MB
+- **Render time:** < 16ms (60fps budget)
 
-### Project Structure
+### Optimizations
 
-```
-cosmic-desktop-widget/
-├── src/
-│   ├── main.rs           # Entry point, Layer Shell setup
-│   ├── wayland/          # Wayland buffer management
-│   │   └── mod.rs
-│   ├── render/           # Rendering with tiny-skia
-│   │   └── mod.rs
-│   ├── widget/           # Widget implementations
-│   │   └── mod.rs
-│   └── config/           # Configuration management
-│       └── mod.rs
-├── Cargo.toml            # Dependencies
-├── flake.nix             # NixOS build configuration
-├── justfile              # Build automation
-└── README.md             # This file
-```
+- Glyph caching to avoid re-rasterizing text
+- Smart update scheduling (only redraw when data changes)
+- Double-buffered Wayland surfaces
+- Efficient shared memory buffer management
 
-### Building from Source
+## Development
+
+### Running Tests
 
 ```bash
-# With Nix
-nix develop
-cargo build --release
+# Run all tests
+cargo test
 
-# Without Nix (install dependencies first)
-cargo build --release
+# Run with output
+cargo test -- --nocapture
+
+# Run specific test
+cargo test test_config_round_trip
+```
+
+### Code Quality
+
+```bash
+# Run clippy
+cargo clippy
+
+# Format code
+cargo fmt
+
+# Check all
+cargo clippy && cargo fmt --check && cargo test
 ```
 
 ### Adding New Widgets
 
-1. Create widget struct in `src/widget/mod.rs`
-2. Implement `update()` and `display_string()` methods
-3. Add to renderer in `src/render/mod.rs`
-4. Update config in `src/config/mod.rs`
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details on the widget system and how to extend it.
 
-### Testing
+## Documentation
 
-```bash
-# Run tests
-just test
+- [Configuration Reference](docs/CONFIGURATION.md) - Detailed documentation of all configuration options
+- [Architecture Guide](docs/ARCHITECTURE.md) - System design and implementation details
+- [Changelog](CHANGELOG.md) - Version history and release notes
 
-# Run with logging
-RUST_LOG=trace just run
-
-# Check code quality
-just check-all
-```
-
-## 📚 Resources
+## Resources
 
 ### Wayland Layer Shell
+
 - [Protocol Specification](https://wayland.app/protocols/wlr-layer-shell-unstable-v1)
-- [Smithay Client Toolkit Docs](https://smithay.github.io/client-toolkit/)
+- [Smithay Client Toolkit](https://smithay.github.io/client-toolkit/)
+- [Wayland Book](https://wayland-book.com/)
 
 ### COSMIC Desktop
-- [COSMIC GitHub](https://github.com/pop-os/cosmic-epoch)
+
+- [COSMIC Desktop](https://github.com/pop-os/cosmic-epoch)
 - [libcosmic](https://github.com/pop-os/libcosmic)
 
 ### Similar Projects
+
 - [Waybar](https://github.com/Alexays/Waybar) - Status bar using Layer Shell
 - [eww](https://github.com/elkowar/eww) - Widget system for Wayland
 
-## 🤝 Contributing
+## Contributing
 
-Contributions welcome! This is a proof-of-concept showing how to build desktop widgets with Layer Shell.
+Contributions are welcome! Please read the existing code and follow the established patterns.
 
 Areas for improvement:
-- Better text rendering (fontdue, rusttype)
-- More widget types (system monitor, calendar, todo list)
-- Click interaction support
-- Theme integration with COSMIC
+
+- Additional widget types (system monitor, calendar, todo list)
+- Click/touch interaction support
+- Multi-monitor support
 - Configuration GUI
+- Dynamic theming from COSMIC settings
 
-## 📝 License
+## License
 
-GPL-3.0 - See LICENSE file
+GPL-3.0 - See [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
-- System76 for COSMIC Desktop
-- Smithay project for Wayland libraries
-- Wayland compositor developers
-
----
-
-**Built with ❤️ using Rust and Wayland Layer Shell**
-
-For questions or issues, please open a GitHub issue!
+- System76 for COSMIC Desktop Environment
+- Smithay project for excellent Wayland libraries
+- tiny-skia for efficient 2D rendering
+- fontdue for high-quality font rasterization
