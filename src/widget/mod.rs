@@ -1,58 +1,175 @@
-// Widget implementations - Clock and Weather
+//! Widget implementations for COSMIC Desktop Widget
+//!
+//! This module provides the core widget types and the extensibility framework
+//! for creating custom widgets.
+//!
+//! # Available Widgets
+//!
+//! - [`ClockWidget`] - Displays current time with configurable format
+//! - [`WeatherWidget`] - Shows weather data from OpenWeatherMap API
+//! - [`SystemMonitorWidget`] - CPU, RAM, and disk usage (requires `sysinfo` feature)
+//! - [`CountdownWidget`] - Countdown to a target date/time
+//! - [`CryptoWidget`] - Cryptocurrency prices from CoinGecko API
+//! - [`CalendarWidget`] - Upcoming events from ICS calendar files
+//! - [`PomodoroWidget`] - Pomodoro timer with work/break cycles
+//! - [`QuotesWidget`] - Inspirational quotes display
+//! - [`BatteryWidget`] - Battery status, percentage, and time remaining
+//! - [`StocksWidget`] - Real-time stock prices from Yahoo Finance
+//! - [`NewsWidget`] - News headlines from RSS feeds with rotation
+//!
+//! # Creating Custom Widgets
+//!
+//! To create a new widget, implement the [`Widget`] trait from the [`traits`] module.
+//! See the [Widget Development Guide](../../docs/WIDGETS.md) for details.
+//!
+//! # Widget Registry
+//!
+//! The [`registry`] module provides dynamic widget creation from configuration.
+//! Use [`WidgetRegistry::with_builtins()`](registry::WidgetRegistry::with_builtins)
+//! to get a registry with all built-in widgets registered.
+
+pub mod registry;
+pub mod traits;
+
+// New widgets
+pub mod battery;
+pub mod calendar;
+pub mod countdown;
+pub mod crypto;
+pub mod mpris;
+pub mod news;
+pub mod pomodoro;
+pub mod quotes;
+pub mod stocks;
+pub mod system_monitor;
+
+pub use battery::BatteryWidget;
+pub use calendar::CalendarWidget;
+pub use countdown::CountdownWidget;
+pub use crypto::{CryptoPrice, CryptoWidget};
+pub use mpris::{MprisConfig, MprisWidget};
+pub use news::{Headline, NewsWidget};
+pub use pomodoro::{PomodoroState, PomodoroWidget};
+pub use quotes::{Quote, QuotesWidget};
+pub use registry::{DynWidgetFactory, WidgetInstance, WidgetRegistry};
+pub use stocks::{StockData, StocksWidget};
+pub use system_monitor::SystemMonitorWidget;
+pub use traits::{
+    FontSize, MouseButton, ScrollDirection, Widget, WidgetAction, WidgetConfig, WidgetContent,
+    WidgetFactory, WidgetInfo,
+};
 
 use crate::error::{WeatherError, WeatherResult};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 /// Clock widget displaying current time
+///
+/// Performance optimized:
+/// - Caches formatted time and date strings
+/// - Only updates when the second actually changes
+/// - Provides borrowed string access to avoid allocations
 pub struct ClockWidget {
+    /// Cached formatted time string
     current_time: String,
+    /// Cached date string (updated at midnight)
+    current_date: String,
+    /// Last update timestamp
     last_update: std::time::Instant,
+    /// Last second value (0-59) to detect changes
+    last_second: u32,
+    /// Time format ("12h" or "24h")
     format: String,
+    /// Whether to show seconds
     show_seconds: bool,
+    /// Whether to show date
     show_date: bool,
+    /// Whether content changed on last update
+    changed: bool,
 }
 
 impl ClockWidget {
     pub fn new(format: &str, show_seconds: bool, show_date: bool) -> Self {
+        use chrono::Timelike;
         let format_str = format.to_string();
+        let now = Local::now();
         Self {
-            current_time: Self::format_time(&format_str, show_seconds),
+            current_time: Self::format_time_internal(&format_str, show_seconds),
+            current_date: now.format("%A, %B %d, %Y").to_string(),
             last_update: std::time::Instant::now(),
+            last_second: now.second(),
             format: format_str,
             show_seconds,
             show_date,
+            changed: true, // First frame is always "changed"
         }
     }
 
+    /// Update the clock if the second has changed
     pub fn update(&mut self) {
-        // Update every second
-        if self.last_update.elapsed().as_secs() >= 1 {
-            self.current_time = Self::format_time(&self.format, self.show_seconds);
+        use chrono::Timelike;
+        let now = Local::now();
+        let current_second = now.second();
+
+        // Only update if the second changed
+        if current_second != self.last_second {
+            self.current_time = Self::format_time_internal(&self.format, self.show_seconds);
+            self.last_second = current_second;
             self.last_update = std::time::Instant::now();
+            self.changed = true;
+
+            // Update date at midnight
+            if now.hour() == 0 && now.minute() == 0 && current_second == 0 {
+                self.current_date = now.format("%A, %B %d, %Y").to_string();
+            }
+
             debug!(time = %self.current_time, "Clock updated");
+        } else {
+            self.changed = false;
         }
     }
 
+    /// Get the current time string (clones the cached value)
+    #[inline]
     pub fn time_string(&self) -> String {
         self.current_time.clone()
     }
 
+    /// Get a reference to the current time string (no allocation)
+    #[inline]
+    pub fn time_str(&self) -> &str {
+        &self.current_time
+    }
+
+    /// Get the current date string (clones the cached value)
+    #[inline]
     pub fn date_string(&self) -> String {
-        let now = Local::now();
-        now.format("%A, %B %d, %Y").to_string()
+        self.current_date.clone()
+    }
+
+    /// Get a reference to the current date string (no allocation)
+    #[inline]
+    pub fn date_str(&self) -> &str {
+        &self.current_date
     }
 
     pub fn date_time_string(&self) -> String {
         if self.show_date {
-            format!("{} - {}", self.date_string(), self.time_string())
+            format!("{} - {}", self.current_date, self.current_time)
         } else {
-            self.time_string()
+            self.current_time.clone()
         }
     }
 
-    fn format_time(format: &str, show_seconds: bool) -> String {
+    /// Check if the clock display changed on the last update
+    #[inline]
+    pub fn has_changed(&self) -> bool {
+        self.changed
+    }
+
+    fn format_time_internal(format: &str, show_seconds: bool) -> String {
         let now = Local::now();
         match (format, show_seconds) {
             ("12h", true) => now.format("%I:%M:%S %p").to_string(),
@@ -66,6 +183,35 @@ impl ClockWidget {
 impl Default for ClockWidget {
     fn default() -> Self {
         Self::new("24h", true, false)
+    }
+}
+
+// Implement the Widget trait for ClockWidget
+impl Widget for ClockWidget {
+    fn info(&self) -> WidgetInfo {
+        WidgetInfo {
+            id: "clock",
+            name: "Clock",
+            preferred_height: 80.0,
+            min_height: 40.0,
+            expand: true,
+        }
+    }
+
+    fn update(&mut self) {
+        // Delegate to existing update method
+        ClockWidget::update(self);
+    }
+
+    fn content(&self) -> WidgetContent {
+        WidgetContent::Text {
+            text: self.time_string(),
+            size: FontSize::Large,
+        }
+    }
+
+    fn update_interval(&self) -> Duration {
+        Duration::from_secs(1)
     }
 }
 
@@ -98,6 +244,18 @@ impl WeatherWidget {
             update_interval: std::time::Duration::from_secs(update_interval),
             temperature_unit: temperature_unit.to_string(),
             error_message: None,
+        }
+    }
+
+    /// Map weather condition to icon name
+    pub fn condition_to_icon(condition: &str) -> &'static str {
+        match condition.to_lowercase().as_str() {
+            "clear" | "sunny" => "weather-clear",
+            "clouds" | "cloudy" | "overcast" => "weather-clouds",
+            "rain" | "drizzle" | "showers" => "weather-rain",
+            "snow" | "sleet" | "flurries" => "weather-snow",
+            "thunderstorm" | "storm" => "weather-storm",
+            _ => "weather-clouds", // Default to clouds for unknown conditions
         }
     }
 
@@ -196,7 +354,8 @@ impl WeatherWidget {
         // Parse the response with better error handling
         let temperature = json["main"]["temp"]
             .as_f64()
-            .ok_or_else(|| WeatherError::ParseError("temperature".to_string()))? as f32;
+            .ok_or_else(|| WeatherError::ParseError("temperature".to_string()))?
+            as f32;
 
         let condition = json["weather"][0]["main"]
             .as_str()
@@ -205,11 +364,13 @@ impl WeatherWidget {
 
         let humidity = json["main"]["humidity"]
             .as_u64()
-            .ok_or_else(|| WeatherError::ParseError("humidity".to_string()))? as u32;
+            .ok_or_else(|| WeatherError::ParseError("humidity".to_string()))?
+            as u32;
 
         let wind_speed = json["wind"]["speed"]
             .as_f64()
-            .ok_or_else(|| WeatherError::ParseError("wind_speed".to_string()))? as f32;
+            .ok_or_else(|| WeatherError::ParseError("wind_speed".to_string()))?
+            as f32;
 
         self.data = Some(WeatherData {
             temperature,
@@ -227,6 +388,57 @@ impl WeatherWidget {
         );
 
         Ok(())
+    }
+}
+
+// Implement the Widget trait for WeatherWidget
+impl Widget for WeatherWidget {
+    fn info(&self) -> WidgetInfo {
+        WidgetInfo {
+            id: "weather",
+            name: "Weather",
+            preferred_height: 40.0,
+            min_height: 30.0,
+            expand: false,
+        }
+    }
+
+    fn update(&mut self) {
+        // Delegate to existing update method
+        WeatherWidget::update(self);
+    }
+
+    fn content(&self) -> WidgetContent {
+        match (&self.data, self.display_string()) {
+            (Some(data), Some(text)) => {
+                let icon = Self::condition_to_icon(&data.condition);
+                WidgetContent::IconText {
+                    icon: icon.to_string(),
+                    text,
+                    size: FontSize::Medium,
+                }
+            }
+            (None, Some(text)) => {
+                // Error case - no icon, just text
+                WidgetContent::Text {
+                    text,
+                    size: FontSize::Medium,
+                }
+            }
+            _ => WidgetContent::Empty,
+        }
+    }
+
+    fn update_interval(&self) -> Duration {
+        self.update_interval
+    }
+
+    fn is_ready(&self) -> bool {
+        self.data.is_some() || self.error_message.is_some()
+    }
+
+    fn error(&self) -> Option<&str> {
+        self.error_message.as_deref()
     }
 }
 
@@ -324,5 +536,41 @@ mod tests {
         let display = weather.display_string();
         assert!(display.is_some());
         assert!(display.unwrap().contains("Error"));
+    }
+
+    #[test]
+    fn test_weather_condition_to_icon() {
+        assert_eq!(WeatherWidget::condition_to_icon("Clear"), "weather-clear");
+        assert_eq!(WeatherWidget::condition_to_icon("Sunny"), "weather-clear");
+        assert_eq!(WeatherWidget::condition_to_icon("Clouds"), "weather-clouds");
+        assert_eq!(WeatherWidget::condition_to_icon("Rain"), "weather-rain");
+        assert_eq!(WeatherWidget::condition_to_icon("Snow"), "weather-snow");
+        assert_eq!(
+            WeatherWidget::condition_to_icon("Thunderstorm"),
+            "weather-storm"
+        );
+        assert_eq!(
+            WeatherWidget::condition_to_icon("Unknown"),
+            "weather-clouds"
+        );
+    }
+
+    #[test]
+    fn test_weather_widget_content_with_icon() {
+        let mut weather = WeatherWidget::new("London", "test_key", "celsius", 600);
+        let data = WeatherData {
+            temperature: 20.5,
+            condition: "Clear".to_string(),
+            humidity: 70,
+            wind_speed: 10.0,
+        };
+        weather.set_data(data);
+
+        match weather.content() {
+            WidgetContent::IconText { icon, .. } => {
+                assert_eq!(icon, "weather-clear");
+            }
+            _ => panic!("Expected IconText variant"),
+        }
     }
 }

@@ -7,31 +7,25 @@ use cosmic_desktop_widget::config::Config;
 use cosmic_desktop_widget::layout::{LayoutDirection, LayoutManager};
 use cosmic_desktop_widget::theme::Theme;
 use cosmic_desktop_widget::update::UpdateScheduler;
-use cosmic_desktop_widget::widget::{ClockWidget, WeatherData, WeatherWidget};
+use cosmic_desktop_widget::widget::{ClockWidget, WeatherData, WeatherWidget, WidgetRegistry};
 use std::time::Duration;
 
-// Test that config can be loaded and widgets initialized
+// Test that config can be loaded and widgets initialized using registry
 #[test]
 fn test_widget_initialization_flow() {
     // This tests the initialization flow without Wayland
     let config = Config::default();
+    let registry = WidgetRegistry::with_builtins();
 
-    let clock = ClockWidget::new(
-        &config.clock_format,
-        config.show_seconds,
-        config.show_date,
-    );
-
-    let weather = WeatherWidget::new(
-        &config.weather_city,
-        &config.weather_api_key,
-        &config.temperature_unit,
-        config.update_interval,
-    );
-
-    assert!(!clock.time_string().is_empty());
-    // Weather may not have data initially
-    assert!(weather.display_string().is_none() || weather.display_string().is_some());
+    // Create widgets from config
+    for instance in config.enabled_widgets() {
+        let widget = registry.create(&instance.widget_type, &instance.config);
+        assert!(
+            widget.is_ok(),
+            "Failed to create widget: {}",
+            instance.widget_type
+        );
+    }
 }
 
 // Test config serialization round-trip
@@ -41,11 +35,10 @@ fn test_config_round_trip() {
     let serialized = toml::to_string(&config).expect("Failed to serialize");
     let deserialized: Config = toml::from_str(&serialized).expect("Failed to deserialize");
 
-    assert_eq!(config.width, deserialized.width);
-    assert_eq!(config.height, deserialized.height);
-    assert_eq!(config.position, deserialized.position);
-    assert_eq!(config.show_clock, deserialized.show_clock);
-    assert_eq!(config.show_weather, deserialized.show_weather);
+    assert_eq!(config.panel.width, deserialized.panel.width);
+    assert_eq!(config.panel.height, deserialized.panel.height);
+    assert_eq!(config.panel.position, deserialized.panel.position);
+    assert_eq!(config.widgets.len(), deserialized.widgets.len());
 }
 
 // Test theme loading
@@ -97,10 +90,7 @@ fn test_layout_calculations() {
 fn test_update_scheduler_timing() {
     use std::thread;
 
-    let mut scheduler = UpdateScheduler::new(
-        Duration::from_millis(50),
-        Duration::from_millis(100),
-    );
+    let mut scheduler = UpdateScheduler::new(Duration::from_millis(50), Duration::from_millis(100));
 
     // Initially should not need update
     let flags = scheduler.check_updates();
@@ -193,16 +183,14 @@ fn test_weather_widget_error_handling() {
 // Test theme integration with config
 #[test]
 fn test_theme_config_integration() {
-    let mut config = Config {
-        theme: "cosmic_dark".to_string(),
-        ..Default::default()
-    };
+    let mut config = Config::default();
+    config.panel.theme = "cosmic_dark".to_string();
 
     let theme = config.get_theme();
     assert_eq!(theme.accent.r, 52); // COSMIC blue
 
     // Test custom theme
-    config.theme = "custom".to_string();
+    config.panel.theme = "custom".to_string();
     config.custom_theme = Some(Theme::light());
 
     let custom_theme = config.get_theme();
@@ -254,23 +242,10 @@ fn test_widget_rendering_workflow() {
     let config = Config::default();
     let _theme = config.get_theme();
 
-    let mut clock = ClockWidget::new(
-        &config.clock_format,
-        config.show_seconds,
-        config.show_date,
-    );
+    let mut clock = ClockWidget::new("24h", true, false);
+    let mut weather = WeatherWidget::new("London", "", "celsius", 600);
 
-    let mut weather = WeatherWidget::new(
-        &config.weather_city,
-        &config.weather_api_key,
-        &config.temperature_unit,
-        config.update_interval,
-    );
-
-    let mut scheduler = UpdateScheduler::new(
-        Duration::from_secs(1),
-        Duration::from_secs(config.update_interval),
-    );
+    let mut scheduler = UpdateScheduler::new(Duration::from_secs(1), Duration::from_secs(600));
 
     // Simulate first update
     let flags = scheduler.check_updates();
@@ -285,12 +260,12 @@ fn test_widget_rendering_workflow() {
     assert!(!clock.time_string().is_empty());
 
     // Layout should work
-    let layout = LayoutManager::new(config.width, config.height)
-        .with_padding(config.padding)
-        .with_spacing(config.spacing);
+    let layout = LayoutManager::new(config.panel.width, config.panel.height)
+        .with_padding(config.panel.padding)
+        .with_spacing(config.panel.spacing);
 
-    let clock_pos = layout.clock_position(config.show_weather);
-    let weather_pos = layout.weather_position(config.show_clock);
+    let clock_pos = layout.clock_position(true);
+    let weather_pos = layout.weather_position(true);
 
     assert!(clock_pos.width > 0.0);
     assert!(weather_pos.width > 0.0);
@@ -301,12 +276,11 @@ fn test_widget_rendering_workflow() {
 fn test_config_defaults() {
     let config = Config::default();
 
-    assert!(config.width > 0);
-    assert!(config.height > 0);
-    assert!(config.update_interval > 0);
-    assert!(config.padding >= 0.0);
-    assert!(config.spacing >= 0.0);
-    assert!(config.show_clock || config.show_weather); // At least one should be shown
+    assert!(config.panel.width > 0);
+    assert!(config.panel.height > 0);
+    assert!(config.panel.padding >= 0.0);
+    assert!(config.panel.spacing >= 0.0);
+    assert!(!config.widgets.is_empty()); // Should have some widgets
 }
 
 // Test temperature unit conversion
@@ -342,10 +316,7 @@ fn test_temperature_unit_conversion() {
 // Test force update functionality
 #[test]
 fn test_force_update() {
-    let mut scheduler = UpdateScheduler::new(
-        Duration::from_secs(60),
-        Duration::from_secs(600),
-    );
+    let mut scheduler = UpdateScheduler::new(Duration::from_secs(60), Duration::from_secs(600));
 
     // Force immediate update
     scheduler.force_update_all();
@@ -353,4 +324,123 @@ fn test_force_update() {
     let flags = scheduler.check_updates();
     assert!(flags.clock);
     assert!(flags.weather);
+}
+
+// Test widget registry
+#[test]
+fn test_widget_registry() {
+    let registry = WidgetRegistry::with_builtins();
+
+    // Check built-in widgets are registered
+    assert!(registry.has_widget("clock"));
+    assert!(registry.has_widget("weather"));
+    assert!(registry.has_widget("system_monitor"));
+    assert!(registry.has_widget("countdown"));
+    assert!(registry.has_widget("quotes"));
+
+    // Unknown widget should not exist
+    assert!(!registry.has_widget("nonexistent"));
+}
+
+// Test creating widgets from registry
+#[test]
+fn test_registry_widget_creation() {
+    let registry = WidgetRegistry::with_builtins();
+
+    // Create clock with default config
+    let clock = registry.create_default("clock");
+    assert!(clock.is_ok());
+
+    // Create weather with custom config
+    let mut weather_config = toml::Table::new();
+    weather_config.insert("city".to_string(), toml::Value::String("Paris".to_string()));
+    let weather = registry.create("weather", &weather_config);
+    assert!(weather.is_ok());
+
+    // Create system monitor
+    let sysmon = registry.create_default("system_monitor");
+    assert!(sysmon.is_ok());
+}
+
+// Test config migration
+#[test]
+fn test_config_migration() {
+    use cosmic_desktop_widget::config::migration;
+
+    let old_config = r#"
+        width = 400
+        height = 150
+        position = "top-right"
+        show_clock = true
+        show_weather = true
+        weather_city = "Berlin"
+        clock_format = "12h"
+        show_seconds = false
+        temperature_unit = "fahrenheit"
+        update_interval = 300
+
+        [margin]
+        top = 20
+        right = 20
+    "#;
+
+    let config = migration::migrate_from_old_format(old_config).unwrap();
+
+    // Panel settings should be preserved
+    assert_eq!(config.panel.width, 400);
+    assert_eq!(config.panel.height, 150);
+    assert_eq!(config.panel.position.as_str(), "top-right");
+
+    // Should have 2 widgets (clock and weather)
+    assert_eq!(config.widgets.len(), 2);
+
+    // Check clock config
+    let clock = &config.widgets[0];
+    assert_eq!(clock.widget_type, "clock");
+    assert_eq!(clock.config.get("format").unwrap().as_str().unwrap(), "12h");
+    assert!(!clock.config.get("show_seconds").unwrap().as_bool().unwrap());
+
+    // Check weather config
+    let weather = &config.widgets[1];
+    assert_eq!(weather.widget_type, "weather");
+    assert_eq!(
+        weather.config.get("city").unwrap().as_str().unwrap(),
+        "Berlin"
+    );
+    assert_eq!(
+        weather
+            .config
+            .get("temperature_unit")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "fahrenheit"
+    );
+}
+
+// Test new widget types
+#[test]
+fn test_new_widgets() {
+    use cosmic_desktop_widget::widget::{
+        CountdownWidget, QuotesWidget, SystemMonitorWidget, Widget,
+    };
+
+    // System Monitor
+    let sysmon = SystemMonitorWidget::default();
+    assert_eq!(sysmon.info().id, "system_monitor");
+    let display = sysmon.display_string();
+    assert!(display.contains("CPU:") || display.contains("RAM:"));
+
+    // Countdown
+    let target = chrono::Local::now() + chrono::Duration::days(10);
+    let countdown = CountdownWidget::new("Event", target, true, true, true, false);
+    assert_eq!(countdown.info().id, "countdown");
+    let display = countdown.display_string();
+    assert!(display.contains("Event:"));
+
+    // Quotes
+    let quotes = QuotesWidget::default();
+    assert_eq!(quotes.info().id, "quotes");
+    let display = quotes.display_string();
+    assert!(!display.is_empty());
 }

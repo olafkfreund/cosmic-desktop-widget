@@ -1,0 +1,26 @@
+# Example configuration for Calendar Widget
+# Add this to your ~/.config/cosmic-desktop-widget/config.toml
+
+[[widgets]]
+type = "calendar"
+enabled = true
+
+[widgets.config]
+# Paths to ICS calendar files (supports ~ for home directory)
+calendar_files = [
+    "~/.local/share/calendar/calendar.ics",
+    "~/.local/share/calendar/work.ics"
+]
+
+# Maximum number of events to display (default: 5)
+max_events = 5
+
+# Show all-day events (default: true)
+show_all_day = true
+
+# Number of days ahead to show events (default: 2)
+# 0 = today only, 1 = today and tomorrow, 2 = today, tomorrow, and day after
+days_ahead = 2
+
+# Update interval in seconds (default: 300 = 5 minutes)
+update_interval = 300

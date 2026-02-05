@@ -49,9 +49,10 @@ impl WeatherService {
                 Ok(runtime) => runtime,
                 Err(e) => {
                     error!(error = %e, "Failed to create tokio runtime for weather fetching");
-                    let _ = sender.send(Err(WeatherError::InvalidResponse(
-                        format!("Failed to create async runtime: {}", e)
-                    )));
+                    let _ = sender.send(Err(WeatherError::InvalidResponse(format!(
+                        "Failed to create async runtime: {}",
+                        e
+                    ))));
                     return;
                 }
             };
@@ -164,10 +165,7 @@ async fn fetch_weather_attempt(city: &str, api_key: &str) -> WeatherResult {
             return Err(WeatherError::CityNotFound(city.to_string()));
         }
 
-        return Err(WeatherError::InvalidResponse(format!(
-            "HTTP {}",
-            status
-        )));
+        return Err(WeatherError::InvalidResponse(format!("HTTP {}", status)));
     }
 
     let json: serde_json::Value = response.json().await.map_err(|e| {
@@ -188,30 +186,23 @@ async fn fetch_weather_attempt(city: &str, api_key: &str) -> WeatherResult {
     }
 
     // Parse weather data with detailed error messages
-    let temperature = json["main"]["temp"]
-        .as_f64()
-        .ok_or_else(|| {
-            WeatherError::ParseError("missing or invalid temperature field".to_string())
-        })? as f32;
+    let temperature = json["main"]["temp"].as_f64().ok_or_else(|| {
+        WeatherError::ParseError("missing or invalid temperature field".to_string())
+    })? as f32;
 
     let condition = json["weather"][0]["main"]
         .as_str()
-        .ok_or_else(|| {
-            WeatherError::ParseError("missing or invalid condition field".to_string())
-        })?
+        .ok_or_else(|| WeatherError::ParseError("missing or invalid condition field".to_string()))?
         .to_string();
 
     let humidity = json["main"]["humidity"]
         .as_u64()
-        .ok_or_else(|| {
-            WeatherError::ParseError("missing or invalid humidity field".to_string())
-        })? as u32;
+        .ok_or_else(|| WeatherError::ParseError("missing or invalid humidity field".to_string()))?
+        as u32;
 
-    let wind_speed = json["wind"]["speed"]
-        .as_f64()
-        .ok_or_else(|| {
-            WeatherError::ParseError("missing or invalid wind_speed field".to_string())
-        })? as f32;
+    let wind_speed = json["wind"]["speed"].as_f64().ok_or_else(|| {
+        WeatherError::ParseError("missing or invalid wind_speed field".to_string())
+    })? as f32;
 
     debug!(
         temp = %temperature,

@@ -1,0 +1,38 @@
+# Example configuration for the Stocks widget
+# Place this in ~/.config/cosmic-desktop-widget/config.toml
+
+[panel]
+width = 400
+height = 500
+position = "top-right"
+margin_top = 50
+margin_right = 50
+
+[[widgets]]
+type = "stocks"
+enabled = true
+
+[widgets.config]
+# Stock symbols to track (array of strings)
+symbols = ["AAPL", "GOOGL", "MSFT", "TSLA"]
+
+# Show price change amount (+2.50 or -1.25)
+show_change = true
+
+# Show percentage change (+1.5% or -0.8%)
+show_percent = true
+
+# Update interval in seconds (minimum 60 recommended)
+# Yahoo Finance API may rate limit if too frequent
+update_interval = 300  # 5 minutes
+
+# Example with single stock
+# symbols = ["AAPL"]
+
+# Example with crypto tickers (if supported by Yahoo Finance)
+# symbols = ["BTC-USD", "ETH-USD"]
+
+# Example showing only price (no change indicators)
+# symbols = ["SPY", "QQQ"]
+# show_change = false
+# show_percent = false

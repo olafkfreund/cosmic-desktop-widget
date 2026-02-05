@@ -103,11 +103,13 @@ impl UpdateScheduler {
     pub fn time_until_next_update(&self) -> Duration {
         let now = Instant::now();
 
-        let clock_remaining = self.clock_interval
+        let clock_remaining = self
+            .clock_interval
             .checked_sub(now.duration_since(self.last_clock_update))
             .unwrap_or(Duration::ZERO);
 
-        let weather_remaining = self.weather_interval
+        let weather_remaining = self
+            .weather_interval
             .checked_sub(now.duration_since(self.last_weather_update))
             .unwrap_or(Duration::ZERO);
 
@@ -118,8 +120,8 @@ impl UpdateScheduler {
 impl Default for UpdateScheduler {
     fn default() -> Self {
         Self::new(
-            Duration::from_secs(1),      // Clock: every second
-            Duration::from_secs(600),    // Weather: every 10 minutes
+            Duration::from_secs(1),   // Clock: every second
+            Duration::from_secs(600), // Weather: every 10 minutes
         )
     }
 }

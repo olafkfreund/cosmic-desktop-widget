@@ -8,8 +8,12 @@
 
 pub mod config;
 pub mod error;
+pub mod icons;
+pub mod input;
 pub mod layout;
 pub mod metrics;
+pub mod panel;
+pub mod position;
 pub mod render;
 pub mod text;
 pub mod theme;
@@ -19,10 +23,19 @@ pub mod weather;
 pub mod widget;
 
 // Re-export commonly used types
-pub use config::{Config, Margin};
+pub use config::{Config, Margin, PanelConfig};
 pub use error::{ConfigError, WeatherError, WidgetError};
+pub use input::{
+    button_code_to_mouse_button, execute_action, hit_test_widgets, scroll_to_direction, InputState,
+};
 pub use layout::{LayoutDirection, LayoutManager, WidgetPosition};
 pub use metrics::{CacheMetrics, RenderMetrics, Timer, WidgetMetrics};
+pub use panel::{MarginAdjustments, PanelAnchor, PanelDetection, PanelInfo, PanelSize};
+pub use position::Position;
 pub use theme::{Color, Theme};
 pub use update::{UpdateFlags, UpdateScheduler};
-pub use widget::{ClockWidget, WeatherData, WeatherWidget};
+pub use widget::{
+    ClockWidget, CountdownWidget, DynWidgetFactory, FontSize, MouseButton, Quote, QuotesWidget,
+    ScrollDirection, SystemMonitorWidget, WeatherData, WeatherWidget, Widget, WidgetAction,
+    WidgetConfig, WidgetContent, WidgetFactory, WidgetInfo, WidgetInstance, WidgetRegistry,
+};

@@ -44,8 +44,8 @@ impl RenderMetrics {
         }
 
         // Running average
-        let total = self.avg_render_time.as_nanos() * (self.render_count - 1) as u128
-            + duration.as_nanos();
+        let total =
+            self.avg_render_time.as_nanos() * (self.render_count - 1) as u128 + duration.as_nanos();
         self.avg_render_time = Duration::from_nanos((total / self.render_count as u128) as u64);
 
         // Track frames over budget

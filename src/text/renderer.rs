@@ -1,64 +1,72 @@
 // Text rendering with alpha blending
+//
+// Performance optimizations:
+// - Avoid cloning glyph bitmaps by using free function for blitting
+// - Reduced allocations in hot path
+// - Efficient alpha blending
 
 use super::{FontManager, GlyphCache};
 use tiny_skia::PixmapMut;
 use tracing::trace;
 
 pub struct TextRenderer {
-  font_manager: FontManager,
-  glyph_cache: GlyphCache,
+    font_manager: FontManager,
+    glyph_cache: GlyphCache,
 }
 
 impl TextRenderer {
-  pub fn new() -> Self {
-    Self {
-      font_manager: FontManager::new(),
-      glyph_cache: GlyphCache::new(),
+    pub fn new() -> Self {
+        Self {
+            font_manager: FontManager::new(),
+            glyph_cache: GlyphCache::new(),
+        }
     }
-  }
 
-  pub fn render_text(
-    &mut self,
-    pixmap: &mut PixmapMut,
-    text: &str,
-    x: f32,
-    y: f32,
-    size: f32,
-    color: [u8; 4], // RGBA
-  ) {
-    trace!("Rendering text: '{}' at ({}, {}) size {}", text, x, y, size);
+    pub fn render_text(
+        &mut self,
+        pixmap: &mut PixmapMut,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: [u8; 4], // RGBA
+    ) {
+        trace!("Rendering text: '{}' at ({}, {}) size {}", text, x, y, size);
 
-    self.glyph_cache.clear_if_full();
+        self.glyph_cache.clear_if_full();
 
-    let mut cursor_x = x;
-    let font = self.font_manager.font();
+        let mut cursor_x = x;
+        let font = self.font_manager.font();
+        let baseline_y = (y - size * 0.8) as i32;
 
-    for c in text.chars() {
-      // Get glyph and clone data to avoid borrow conflicts
-      let glyph = self.glyph_cache.get_or_rasterize(font, c, size);
-      let bitmap = glyph.bitmap.clone();
-      let width = glyph.width;
-      let height = glyph.height;
-      let advance = glyph.advance_width;
+        for c in text.chars() {
+            // Get glyph from cache (no cloning - use borrowed reference)
+            let glyph = self.glyph_cache.get_or_rasterize(font, c, size);
 
-      // Blit the glyph bitmap to the pixmap with alpha blending
-      self.blit_glyph(
-        pixmap,
-        &bitmap,
-        width,
-        height,
-        cursor_x as i32,
-        (y - size * 0.8) as i32, // Baseline adjustment
-        color,
-      );
+            // Blit the glyph bitmap to the pixmap with alpha blending
+            // Using a free function to avoid borrow conflicts with self
+            blit_glyph(
+                pixmap,
+                &glyph.bitmap,
+                glyph.width,
+                glyph.height,
+                cursor_x as i32,
+                baseline_y,
+                color,
+            );
 
-      cursor_x += advance;
+            cursor_x += glyph.advance_width;
+        }
     }
-  }
+}
 
-  #[allow(clippy::too_many_arguments)]
-  fn blit_glyph(
-    &self,
+/// Blit a glyph bitmap onto a pixmap with alpha blending
+///
+/// This is a free function to avoid borrow conflicts when iterating
+/// through the glyph cache while rendering.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn blit_glyph(
     pixmap: &mut PixmapMut,
     bitmap: &[u8],
     glyph_width: usize,
@@ -66,105 +74,126 @@ impl TextRenderer {
     x: i32,
     y: i32,
     color: [u8; 4],
-  ) {
+) {
     let pixmap_width = pixmap.width() as i32;
     let pixmap_height = pixmap.height() as i32;
     let pixels = pixmap.pixels_mut();
 
+    // Pre-compute color components for blending
+    let color_r = color[0] as f32;
+    let color_g = color[1] as f32;
+    let color_b = color[2] as f32;
+    let color_a_factor = color[3] as f32 / 255.0;
+
     for gy in 0..glyph_height {
-      for gx in 0..glyph_width {
-        let px = x + gx as i32;
         let py = y + gy as i32;
 
-        if px < 0 || py < 0 || px >= pixmap_width || py >= pixmap_height {
-          continue;
+        // Skip entire row if out of bounds
+        if py < 0 || py >= pixmap_height {
+            continue;
         }
 
-        let glyph_alpha = bitmap[gy * glyph_width + gx];
-        if glyph_alpha == 0 {
-          continue;
+        let row_start = py * pixmap_width;
+
+        for gx in 0..glyph_width {
+            let px = x + gx as i32;
+
+            // Skip if out of bounds horizontally
+            if px < 0 || px >= pixmap_width {
+                continue;
+            }
+
+            let glyph_alpha = bitmap[gy * glyph_width + gx];
+            if glyph_alpha == 0 {
+                continue;
+            }
+
+            let idx = (row_start + px) as usize;
+            let pixel = &mut pixels[idx];
+
+            // Alpha blend with tiny-skia's premultiplied alpha
+            let alpha = (glyph_alpha as f32 / 255.0) * color_a_factor;
+            let inv_alpha = 1.0 - alpha;
+
+            // Demultiply existing pixel
+            let dst = pixel.demultiply();
+
+            // Blend in linear space (using pre-computed color values)
+            let new_r = (color_r * alpha + dst.red() as f32 * inv_alpha).clamp(0.0, 255.0) as u8;
+            let new_g = (color_g * alpha + dst.green() as f32 * inv_alpha).clamp(0.0, 255.0) as u8;
+            let new_b = (color_b * alpha + dst.blue() as f32 * inv_alpha).clamp(0.0, 255.0) as u8;
+            let new_a =
+                ((alpha + dst.alpha() as f32 / 255.0 * inv_alpha) * 255.0).clamp(0.0, 255.0) as u8;
+
+            // Create premultiplied color for tiny-skia
+            *pixel = tiny_skia::PremultipliedColorU8::from_rgba(new_r, new_g, new_b, new_a)
+                .unwrap_or(*pixel); // Fallback to original pixel if color creation fails
+        }
+    }
+}
+
+impl TextRenderer {
+    /// Calculate text width for layout purposes
+    pub fn measure_text(&mut self, text: &str, size: f32) -> f32 {
+        let font = self.font_manager.font();
+        let mut width = 0.0;
+
+        for c in text.chars() {
+            let glyph = self.glyph_cache.get_or_rasterize(font, c, size);
+            width += glyph.advance_width;
         }
 
-        let idx = (py * pixmap_width + px) as usize;
-        let pixel = &mut pixels[idx];
-
-        // Alpha blend with tiny-skia's premultiplied alpha
-        let alpha = (glyph_alpha as f32 / 255.0) * (color[3] as f32 / 255.0);
-        let inv_alpha = 1.0 - alpha;
-
-        // Demultiply existing pixel
-        let dst = pixel.demultiply();
-
-        // Blend in linear space
-        let new_r = (color[0] as f32 * alpha + dst.red() as f32 * inv_alpha).clamp(0.0, 255.0) as u8;
-        let new_g = (color[1] as f32 * alpha + dst.green() as f32 * inv_alpha).clamp(0.0, 255.0) as u8;
-        let new_b = (color[2] as f32 * alpha + dst.blue() as f32 * inv_alpha).clamp(0.0, 255.0) as u8;
-        let new_a = ((alpha + dst.alpha() as f32 / 255.0 * inv_alpha) * 255.0).clamp(0.0, 255.0) as u8;
-
-        // Create premultiplied color for tiny-skia
-        *pixel = tiny_skia::PremultipliedColorU8::from_rgba(new_r, new_g, new_b, new_a)
-          .unwrap_or(*pixel); // Fallback to original pixel if color creation fails
-      }
+        width
     }
-  }
-
-  /// Calculate text width for layout purposes
-  pub fn measure_text(&mut self, text: &str, size: f32) -> f32 {
-    let font = self.font_manager.font();
-    let mut width = 0.0;
-
-    for c in text.chars() {
-      let glyph = self.glyph_cache.get_or_rasterize(font, c, size);
-      width += glyph.advance_width;
-    }
-
-    width
-  }
 }
 
 impl Default for TextRenderer {
-  fn default() -> Self {
-    Self::new()
-  }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use tiny_skia::Pixmap;
+    use super::*;
+    use tiny_skia::Pixmap;
 
-  #[test]
-  fn test_text_renderer_creation() {
-    let renderer = TextRenderer::new();
-    // Just verify it creates without panic
-    assert!(renderer.font_manager.font().horizontal_line_metrics(16.0).is_some());
-  }
+    #[test]
+    fn test_text_renderer_creation() {
+        let renderer = TextRenderer::new();
+        // Just verify it creates without panic
+        assert!(renderer
+            .font_manager
+            .font()
+            .horizontal_line_metrics(16.0)
+            .is_some());
+    }
 
-  #[test]
-  fn test_measure_text() {
-    let mut renderer = TextRenderer::new();
-    let width = renderer.measure_text("Hello", 16.0);
-    assert!(width > 0.0);
+    #[test]
+    fn test_measure_text() {
+        let mut renderer = TextRenderer::new();
+        let width = renderer.measure_text("Hello", 16.0);
+        assert!(width > 0.0);
 
-    // Longer text should be wider
-    let width2 = renderer.measure_text("Hello World!", 16.0);
-    assert!(width2 > width);
-  }
+        // Longer text should be wider
+        let width2 = renderer.measure_text("Hello World!", 16.0);
+        assert!(width2 > width);
+    }
 
-  #[test]
-  fn test_render_text() {
-    let mut renderer = TextRenderer::new();
-    let mut pixmap = Pixmap::new(200, 100).unwrap();
-    let mut pixmap_mut = pixmap.as_mut();
+    #[test]
+    fn test_render_text() {
+        let mut renderer = TextRenderer::new();
+        let mut pixmap = Pixmap::new(200, 100).unwrap();
+        let mut pixmap_mut = pixmap.as_mut();
 
-    // Should not panic
-    renderer.render_text(
-      &mut pixmap_mut,
-      "Test",
-      10.0,
-      50.0,
-      16.0,
-      [255, 255, 255, 255],
-    );
-  }
+        // Should not panic
+        renderer.render_text(
+            &mut pixmap_mut,
+            "Test",
+            10.0,
+            50.0,
+            16.0,
+            [255, 255, 255, 255],
+        );
+    }
 }

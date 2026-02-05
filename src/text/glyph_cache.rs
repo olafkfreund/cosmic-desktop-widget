@@ -56,7 +56,9 @@ impl GlyphCache {
             );
         }
 
-        self.cache.get(&key).expect("Glyph must exist after insertion")
+        self.cache
+            .get(&key)
+            .expect("Glyph must exist after insertion")
     }
 
     pub fn clear_if_full(&mut self) {

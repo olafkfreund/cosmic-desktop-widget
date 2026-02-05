@@ -332,19 +332,62 @@ cosmic-desktop-widget/
 
 ## Performance
 
-### Targets
+### Target Metrics
 
-- **Idle CPU:** < 0.1%
-- **Active CPU:** < 1%
-- **Memory:** < 50 MB
-- **Render time:** < 16ms (60fps budget)
+| Metric | Target | Description |
+|--------|--------|-------------|
+| Idle CPU | < 0.1% | When display is static (no updates) |
+| Active CPU | < 1% | During widget updates (clock tick) |
+| Idle RAM | < 20 MB | Baseline memory usage |
+| Active RAM | < 50 MB | With all widgets enabled |
+| Render time | < 5 ms | Time to draw a single frame |
+| Frame budget | < 16 ms | Total time per frame (60fps) |
 
-### Optimizations
+### Performance Optimizations
 
-- Glyph caching to avoid re-rasterizing text
-- Smart update scheduling (only redraw when data changes)
-- Double-buffered Wayland surfaces
-- Efficient shared memory buffer management
+The widget system implements several optimizations to minimize resource usage:
+
+**Rendering Optimizations:**
+- Dirty region tracking - only redraws when content actually changes
+- Cached font size calculations - avoids binary search on every frame
+- Glyph caching - reuses rasterized text glyphs across frames
+- Conditional buffer clearing - skips clearing when not needed
+
+**Update Optimizations:**
+- Dynamic timer intervals - sleeps until next widget needs updating
+- Change detection - compares current vs. previous state before redrawing
+- Cached time strings - avoids formatting on every frame
+
+**Memory Optimizations:**
+- Efficient buffer pool with double-buffering
+- Borrowed string references where possible
+- Reused glyph bitmaps (no cloning in render loop)
+
+### Profiling
+
+```bash
+# Run with performance metrics logging
+RUST_LOG=debug cargo run --release
+
+# Generate CPU flamegraph (requires cargo-flamegraph)
+cargo flamegraph --bin cosmic-desktop-widget
+
+# Memory profiling with heaptrack
+heaptrack ./target/release/cosmic-desktop-widget
+
+# Benchmark specific operations
+cargo bench
+```
+
+### Benchmark Results
+
+Run benchmarks with `cargo bench`. Results are saved to `target/criterion/`.
+
+Key benchmarks:
+- `clock_update` - Time to update clock widget
+- `clock_time_string/borrow` - Optimized string access
+- `scheduler_check_updates` - Update scheduling overhead
+- `theme_background_with_opacity` - Color operations
 
 ## Development
 

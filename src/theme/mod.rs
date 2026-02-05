@@ -55,6 +55,10 @@ pub struct Theme {
     /// Background transparency (0.0 = transparent, 1.0 = opaque)
     pub opacity: f32,
 
+    /// Enable compositor blur hint (for Wayland compositors that support it)
+    #[serde(default)]
+    pub blur_enabled: bool,
+
     /// Border width in pixels
     pub border_width: f32,
 
@@ -72,6 +76,7 @@ impl Theme {
             text_secondary: Color::new(180, 180, 180, 255),
             accent: Color::new(52, 120, 246, 255), // COSMIC blue
             opacity: 0.9,
+            blur_enabled: false,
             border_width: 2.0,
             corner_radius: 8.0,
         }
@@ -86,12 +91,13 @@ impl Theme {
             text_secondary: Color::new(80, 80, 80, 255),
             accent: Color::new(52, 120, 246, 255),
             opacity: 0.95,
+            blur_enabled: false,
             border_width: 1.0,
             corner_radius: 8.0,
         }
     }
 
-    /// Transparent dark theme
+    /// Transparent dark theme (very low opacity, light text)
     pub fn transparent_dark() -> Self {
         Self {
             background: Color::new(0, 0, 0, 128),
@@ -100,8 +106,39 @@ impl Theme {
             text_secondary: Color::new(200, 200, 200, 200),
             accent: Color::new(52, 120, 246, 200),
             opacity: 0.5,
+            blur_enabled: false,
             border_width: 1.0,
             corner_radius: 12.0,
+        }
+    }
+
+    /// Transparent light theme (very low opacity, dark text)
+    pub fn transparent_light() -> Self {
+        Self {
+            background: Color::new(255, 255, 255, 128),
+            border: Color::new(30, 30, 30, 50),
+            text_primary: Color::new(0, 0, 0, 255),
+            text_secondary: Color::new(60, 60, 60, 220),
+            accent: Color::new(52, 120, 246, 200),
+            opacity: 0.5,
+            blur_enabled: false,
+            border_width: 1.0,
+            corner_radius: 12.0,
+        }
+    }
+
+    /// Glass theme (moderate opacity with blur hint)
+    pub fn glass() -> Self {
+        Self {
+            background: Color::new(40, 40, 40, 180),
+            border: Color::new(120, 120, 120, 120),
+            text_primary: Color::new(255, 255, 255, 255),
+            text_secondary: Color::new(200, 200, 200, 220),
+            accent: Color::new(52, 120, 246, 230),
+            opacity: 0.7,
+            blur_enabled: true,
+            border_width: 1.5,
+            corner_radius: 16.0,
         }
     }
 
@@ -121,6 +158,8 @@ impl Theme {
             "cosmic_dark" => Self::cosmic_dark(),
             "light" => Self::light(),
             "transparent_dark" => Self::transparent_dark(),
+            "transparent_light" => Self::transparent_light(),
+            "glass" => Self::glass(),
             _ => Self::cosmic_dark(),
         }
     }
@@ -168,12 +207,24 @@ mod tests {
     fn test_theme_from_name() {
         let dark = Theme::from_name("cosmic_dark");
         assert_eq!(dark.accent.r, 52);
+        assert!(!dark.blur_enabled);
 
         let light = Theme::from_name("light");
         assert_eq!(light.background.r, 255);
+        assert!(!light.blur_enabled);
 
-        let transparent = Theme::from_name("transparent_dark");
-        assert_eq!(transparent.opacity, 0.5);
+        let transparent_dark = Theme::from_name("transparent_dark");
+        assert_eq!(transparent_dark.opacity, 0.5);
+        assert!(!transparent_dark.blur_enabled);
+
+        let transparent_light = Theme::from_name("transparent_light");
+        assert_eq!(transparent_light.opacity, 0.5);
+        assert_eq!(transparent_light.text_primary.r, 0); // Dark text
+        assert!(!transparent_light.blur_enabled);
+
+        let glass = Theme::from_name("glass");
+        assert_eq!(glass.opacity, 0.7);
+        assert!(glass.blur_enabled);
 
         // Unknown theme defaults to cosmic_dark
         let unknown = Theme::from_name("unknown");
