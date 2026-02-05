@@ -74,6 +74,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 resvg = "0.37"
 usvg = "0.37"
 
+# Audio playback for alarms and notifications
+rodio = { version = "0.17", optional = true }
+
 # Configuration file watching
 notify = { version = "6.1", default-features = false, features = ["macos_kqueue"] }
 
@@ -84,6 +87,7 @@ once_cell = { version = "1", optional = true }
 [features]
 default = []
 gui = ["libcosmic", "once_cell"]
+audio = ["rodio"]
 
 [dev-dependencies]
 criterion = "0.5"

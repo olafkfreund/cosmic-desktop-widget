@@ -35,6 +35,8 @@
           fontconfig
           freetype
           openssl
+          # Audio support (for alarms and notifications)
+          alsa-lib
         ];
 
       in {

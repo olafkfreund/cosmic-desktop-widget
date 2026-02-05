@@ -1,5 +1,6 @@
 // Glyph caching for efficient text rendering
 
+use super::font::FontWeight;
 use crate::metrics::CacheMetrics;
 use fontdue::Font;
 use std::collections::HashMap;
@@ -15,6 +16,7 @@ pub struct GlyphCache {
 struct GlyphKey {
     character: char,
     size_px: u32, // size in pixels * 10 for sub-pixel precision
+    weight: FontWeight,
 }
 
 pub struct RasterizedGlyph {
@@ -32,10 +34,17 @@ impl GlyphCache {
         }
     }
 
-    pub fn get_or_rasterize(&mut self, font: &Font, c: char, size: f32) -> &RasterizedGlyph {
+    pub fn get_or_rasterize(
+        &mut self,
+        font: &Font,
+        c: char,
+        size: f32,
+        weight: FontWeight,
+    ) -> &RasterizedGlyph {
         let key = GlyphKey {
             character: c,
             size_px: (size * 10.0) as u32,
+            weight,
         };
 
         // Check if we have a cache hit
@@ -132,7 +141,7 @@ mod tests {
 
         // First access - rasterize glyph (cache miss)
         let width1 = {
-            let glyph1 = cache.get_or_rasterize(&font, 'A', 16.0);
+            let glyph1 = cache.get_or_rasterize(&font, 'A', 16.0, FontWeight::Regular);
             assert!(glyph1.width > 0);
             assert!(glyph1.height > 0);
             glyph1.width
@@ -143,7 +152,7 @@ mod tests {
         assert_eq!(cache.metrics().hits(), 0);
 
         // Second access should use cache (cache hit)
-        let width2 = cache.get_or_rasterize(&font, 'A', 16.0).width;
+        let width2 = cache.get_or_rasterize(&font, 'A', 16.0, FontWeight::Regular).width;
         assert_eq!(width1, width2);
 
         // Should now have a hit
@@ -162,6 +171,7 @@ mod tests {
             GlyphKey {
                 character: 'A',
                 size_px: 160,
+                weight: FontWeight::Regular,
             },
             RasterizedGlyph {
                 bitmap: vec![],
@@ -183,12 +193,27 @@ mod tests {
 
         // Access same glyph multiple times
         for _ in 0..10 {
-            cache.get_or_rasterize(&font, 'X', 16.0);
+            cache.get_or_rasterize(&font, 'X', 16.0, FontWeight::Regular);
         }
 
         // First was miss, rest are hits
         assert_eq!(cache.metrics().misses(), 1);
         assert_eq!(cache.metrics().hits(), 9);
         assert_eq!(cache.metrics().hit_rate(), 90.0);
+    }
+
+    #[test]
+    fn test_cache_different_weights() {
+        let font = get_test_font();
+        let mut cache = GlyphCache::new();
+
+        // Access same character with different weights
+        cache.get_or_rasterize(&font, 'A', 16.0, FontWeight::Regular);
+        cache.get_or_rasterize(&font, 'A', 16.0, FontWeight::Bold);
+
+        // Both should be misses since they're different cache keys
+        assert_eq!(cache.metrics().misses(), 2);
+        assert_eq!(cache.metrics().hits(), 0);
+        assert_eq!(cache.len(), 2);
     }
 }

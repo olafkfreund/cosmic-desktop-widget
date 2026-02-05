@@ -5,7 +5,7 @@
 // - Reduced allocations in hot path
 // - Efficient alpha blending
 
-use super::{FontManager, GlyphCache};
+use super::{FontManager, FontWeight, GlyphCache};
 use tiny_skia::PixmapMut;
 use tracing::trace;
 
@@ -22,6 +22,7 @@ impl TextRenderer {
         }
     }
 
+    /// Render text with default (regular) weight
     pub fn render_text(
         &mut self,
         pixmap: &mut PixmapMut,
@@ -31,17 +32,34 @@ impl TextRenderer {
         size: f32,
         color: [u8; 4], // RGBA
     ) {
-        trace!("Rendering text: '{}' at ({}, {}) size {}", text, x, y, size);
+        self.render_text_weighted(pixmap, text, x, y, size, color, FontWeight::Regular);
+    }
+
+    /// Render text with specified font weight
+    pub fn render_text_weighted(
+        &mut self,
+        pixmap: &mut PixmapMut,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: [u8; 4], // RGBA
+        weight: FontWeight,
+    ) {
+        trace!(
+            "Rendering text: '{}' at ({}, {}) size {} weight {:?}",
+            text, x, y, size, weight
+        );
 
         self.glyph_cache.clear_if_full();
 
         let mut cursor_x = x;
-        let font = self.font_manager.font();
+        let font = self.font_manager.font(weight);
         let baseline_y = (y - size * 0.8) as i32;
 
         for c in text.chars() {
             // Get glyph from cache (no cloning - use borrowed reference)
-            let glyph = self.glyph_cache.get_or_rasterize(font, c, size);
+            let glyph = self.glyph_cache.get_or_rasterize(font, c, size, weight);
 
             // Blit the glyph bitmap to the pixmap with alpha blending
             // Using a free function to avoid borrow conflicts with self
@@ -133,13 +151,18 @@ fn blit_glyph(
 }
 
 impl TextRenderer {
-    /// Calculate text width for layout purposes
+    /// Calculate text width for layout purposes (uses regular weight)
     pub fn measure_text(&mut self, text: &str, size: f32) -> f32 {
-        let font = self.font_manager.font();
+        self.measure_text_weighted(text, size, FontWeight::Regular)
+    }
+
+    /// Calculate text width with specified font weight
+    pub fn measure_text_weighted(&mut self, text: &str, size: f32, weight: FontWeight) -> f32 {
+        let font = self.font_manager.font(weight);
         let mut width = 0.0;
 
         for c in text.chars() {
-            let glyph = self.glyph_cache.get_or_rasterize(font, c, size);
+            let glyph = self.glyph_cache.get_or_rasterize(font, c, size, weight);
             width += glyph.advance_width;
         }
 
@@ -160,11 +183,12 @@ mod tests {
 
     #[test]
     fn test_text_renderer_creation() {
+        use super::super::FontWeight;
         let renderer = TextRenderer::new();
         // Just verify it creates without panic
         assert!(renderer
             .font_manager
-            .font()
+            .font(FontWeight::Regular)
             .horizontal_line_metrics(16.0)
             .is_some());
     }

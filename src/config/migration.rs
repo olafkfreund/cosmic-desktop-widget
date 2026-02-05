@@ -227,6 +227,8 @@ fn convert_old_to_new(old: OldConfig) -> Config {
         },
         widgets,
         custom_theme: None,
+        theme_config: None,
+        sounds: super::SoundsConfig::default(),
     }
 }
 

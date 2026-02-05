@@ -9,7 +9,7 @@ use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use tracing::debug;
 
 use super::registry::DynWidgetFactory;
-use super::traits::{FontSize, Widget, WidgetContent, WidgetInfo};
+use super::traits::{FontSize, TextSegment, Widget, WidgetContent, WidgetInfo};
 
 /// Countdown widget showing time remaining until a target
 pub struct CountdownWidget {
@@ -135,6 +135,63 @@ impl CountdownWidget {
             format!("{}: {}", self.label, parts.join(" "))
         }
     }
+
+    /// Generate styled text segments with bold numbers and regular units
+    pub fn styled_segments(&self) -> Vec<TextSegment> {
+        let remaining = self.remaining();
+
+        // Check if countdown has passed
+        if remaining < chrono::Duration::zero() {
+            return vec![
+                TextSegment::regular(&self.label),
+                TextSegment::regular(": "),
+                TextSegment::bold("Passed!"),
+            ];
+        }
+
+        let total_seconds = remaining.num_seconds();
+        let days = total_seconds / 86400;
+        let hours = (total_seconds % 86400) / 3600;
+        let minutes = (total_seconds % 3600) / 60;
+        let seconds = total_seconds % 60;
+
+        let mut segments = vec![
+            TextSegment::regular(&self.label),
+            TextSegment::regular(": "),
+        ];
+
+        let mut has_content = false;
+
+        if self.show_days && days > 0 {
+            segments.push(TextSegment::bold(format!("{}", days)));
+            segments.push(TextSegment::regular("d "));
+            has_content = true;
+        }
+
+        if self.show_hours && (hours > 0 || days > 0) {
+            segments.push(TextSegment::bold(format!("{}", hours)));
+            segments.push(TextSegment::regular("h "));
+            has_content = true;
+        }
+
+        if self.show_minutes && (minutes > 0 || hours > 0 || days > 0) {
+            segments.push(TextSegment::bold(format!("{}", minutes)));
+            segments.push(TextSegment::regular("m "));
+            has_content = true;
+        }
+
+        if self.show_seconds {
+            segments.push(TextSegment::bold(format!("{}", seconds)));
+            segments.push(TextSegment::regular("s"));
+            has_content = true;
+        }
+
+        if !has_content {
+            segments.push(TextSegment::bold("Now!"));
+        }
+
+        segments
+    }
 }
 
 impl Widget for CountdownWidget {
@@ -154,8 +211,8 @@ impl Widget for CountdownWidget {
     }
 
     fn content(&self) -> WidgetContent {
-        WidgetContent::Text {
-            text: self.display_string(),
+        WidgetContent::StyledText {
+            segments: self.styled_segments(),
             size: FontSize::Medium,
         }
     }

@@ -6,6 +6,7 @@
 
 #![warn(missing_docs)]
 
+pub mod audio;
 pub mod config;
 pub mod config_watcher;
 pub mod error;
@@ -16,6 +17,7 @@ pub mod metrics;
 pub mod panel;
 pub mod position;
 pub mod render;
+pub mod surface;
 pub mod text;
 pub mod theme;
 pub mod update;
@@ -24,7 +26,10 @@ pub mod weather;
 pub mod widget;
 
 // Re-export commonly used types
-pub use config::{Config, Margin, PanelConfig};
+pub use config::{
+    Config, GradientConfig, Margin, PanelConfig, SoundsConfig, ThemeColors, ThemeConfig,
+    ThemeStyle,
+};
 pub use config_watcher::{ConfigReloadEvent, ConfigWatcher};
 pub use error::{ConfigError, WeatherError, WidgetError};
 pub use input::{
@@ -36,8 +41,11 @@ pub use panel::{MarginAdjustments, PanelAnchor, PanelDetection, PanelInfo, Panel
 pub use position::Position;
 pub use theme::{Color, Theme};
 pub use update::{UpdateFlags, UpdateScheduler};
+pub use audio::{AudioPlayer, SoundConfig, SoundEffect};
+pub use text::FontWeight;
 pub use widget::{
-    ClockWidget, CountdownWidget, DynWidgetFactory, FontSize, MouseButton, Quote, QuotesWidget,
-    ScrollDirection, SystemMonitorWidget, WeatherData, WeatherWidget, Widget, WidgetAction,
-    WidgetConfig, WidgetContent, WidgetFactory, WidgetInfo, WidgetInstance, WidgetRegistry,
+    ClockWidget, CountdownWidget, DynWidgetFactory, FontSize, MouseButton, ProgressBar,
+    ProgressColor, Quote, QuotesWidget, ScrollDirection, SystemMonitorWidget, TextSegment,
+    WeatherData, WeatherWidget, Widget, WidgetAction, WidgetConfig, WidgetContent, WidgetFactory,
+    WidgetInfo, WidgetInstance, WidgetRegistry,
 };

@@ -31,18 +31,15 @@ use wayland_client::{
 };
 
 use cosmic_desktop_widget::{
-    button_code_to_mouse_button,
     config::Config,
     config_watcher::ConfigWatcher,
-    execute_action, hit_test_widgets,
     metrics::{Timer, WidgetMetrics, TARGET_RENDER_TIME_MS},
     panel::{MarginAdjustments, PanelDetection},
     render::Renderer,
-    scroll_to_direction,
+    surface::WidgetSurface,
     update::UpdateScheduler,
-    wayland,
     widget::{ClockWidget, WeatherWidget, Widget, WidgetRegistry},
-    InputState,
+    InputState, Position,
 };
 
 /// Main application state
@@ -55,14 +52,11 @@ struct DesktopWidget {
     layer_shell: LayerShell,
     seat_state: SeatState,
 
-    // Our layer surface
-    layer: Option<LayerSurface>,
+    // Multiple widget surfaces (one per widget)
+    widget_surfaces: Vec<WidgetSurface>,
 
     // Rendering
     renderer: Renderer,
-    width: u32,
-    height: u32,
-    buffer_pool: Option<wayland::BufferPool>,
 
     // Dynamic widgets (new system)
     widgets: Vec<Box<dyn Widget>>,
@@ -90,7 +84,6 @@ struct DesktopWidget {
     input_state: InputState,
 
     // State
-    configured: bool,
     first_frame: bool,
 }
 
@@ -117,12 +110,15 @@ impl CompositorHandler for DesktopWidget {
 
     fn frame(
         &mut self,
-        conn: &Connection,
+        _conn: &Connection,
         qh: &QueueHandle<Self>,
-        _surface: &wl_surface::WlSurface,
+        surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        self.draw(conn, qh);
+        // Find which widget surface this frame callback is for
+        if let Some(idx) = self.widget_surfaces.iter().position(|s| &s.wl_surface == surface) {
+            self.draw_widget_surface(idx, qh);
+        }
     }
 }
 
@@ -157,27 +153,51 @@ impl OutputHandler for DesktopWidget {
 }
 
 impl LayerShellHandler for DesktopWidget {
-    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
+    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, layer: &LayerSurface) {
         tracing::info!("Layer surface closed");
+
+        // Find and remove the closed surface
+        if let Some(idx) = self.widget_surfaces.iter().position(|s| &s.layer == layer) {
+            tracing::info!(widget_index = idx, "Removing closed widget surface");
+            self.widget_surfaces.remove(idx);
+        }
     }
 
     fn configure(
         &mut self,
-        conn: &Connection,
+        _conn: &Connection,
         qh: &QueueHandle<Self>,
-        _layer: &LayerSurface,
+        layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
+        // Find which surface this configure is for
+        let surface_idx = match self.widget_surfaces.iter().position(|s| &s.layer == layer) {
+            Some(idx) => idx,
+            None => {
+                tracing::warn!("Configure event for unknown surface");
+                return;
+            }
+        };
+
+        let surface = &mut self.widget_surfaces[surface_idx];
+
+        // Update size if compositor changed it
         if configure.new_size.0 > 0 && configure.new_size.1 > 0 {
-            self.width = configure.new_size.0;
-            self.height = configure.new_size.1;
+            surface.resize(configure.new_size.0, configure.new_size.1);
         }
 
-        self.configured = true;
-        tracing::info!("Configured: {}x{}", self.width, self.height);
+        surface.configured = true;
 
-        self.draw(conn, qh);
+        tracing::info!(
+            widget_index = surface.widget_index,
+            width = surface.width,
+            height = surface.height,
+            "Surface configured"
+        );
+
+        // Draw this specific surface
+        self.draw_widget_surface(surface_idx, qh);
     }
 }
 
@@ -258,110 +278,27 @@ impl PointerHandler for DesktopWidget {
                 PointerEventKind::Motion { time: _ } => {
                     let (x, y) = event.position;
                     self.input_state.update_position(x, y);
-
-                    // Update hover state
-                    let widget_index =
-                        hit_test_widgets(x, y, &self.widgets, &self.widget_positions);
-                    self.input_state
-                        .update_hover(widget_index, &mut self.widgets);
+                    // Hover state tracking disabled with multi-surface architecture
                 }
                 PointerEventKind::Press {
                     time: _,
-                    button,
+                    button: _,
                     serial: _,
                 } => {
-                    let (x, y) = self.input_state.pointer_position();
-                    let widget_index =
-                        hit_test_widgets(x, y, &self.widgets, &self.widget_positions);
-
-                    if let Some(index) = widget_index {
-                        if let Some(widget) = self.widgets.get_mut(index) {
-                            // Calculate normalized coordinates within widget
-                            let (y_offset, height) = self.widget_positions[index];
-                            let widget_y = (y - y_offset as f64) / height as f64;
-                            let widget_x = x / self.width as f64;
-
-                            let mouse_button = button_code_to_mouse_button(*button);
-                            if let Some(action) =
-                                widget.on_click(mouse_button, widget_x as f32, widget_y as f32)
-                            {
-                                tracing::info!(
-                                    widget = widget.info().id,
-                                    button = ?mouse_button,
-                                    "Widget click action"
-                                );
-                                if let Err(e) = execute_action(action) {
-                                    tracing::error!(error = %e, "Failed to execute widget action");
-                                }
-
-                                // Redraw to show updated widget state
-                                if let Some(layer) = &self.layer {
-                                    layer
-                                        .wl_surface()
-                                        .frame(_qh, layer.wl_surface().clone());
-                                    layer.wl_surface().commit();
-                                }
-                            }
-                        }
-                    }
+                    // Mouse input handling is disabled for desktop widgets
+                    // (KeyboardInteractivity::None means no input events)
                 }
                 PointerEventKind::Release { .. } => {
                     // Currently no action on release
                 }
                 PointerEventKind::Axis {
                     time: _,
-                    horizontal,
-                    vertical,
+                    horizontal: _,
+                    vertical: _,
                     source: _,
                 } => {
-                    let (x, y) = self.input_state.pointer_position();
-                    let widget_index =
-                        hit_test_widgets(x, y, &self.widgets, &self.widget_positions);
-
-                    if let Some(index) = widget_index {
-                        if let Some(widget) = self.widgets.get_mut(index) {
-                            // Handle vertical scroll (discrete is i32, non-zero means scroll)
-                            let scroll_amount = vertical.discrete;
-                            if scroll_amount != 0 {
-                                if let Some(direction) = scroll_to_direction(scroll_amount as f64)
-                                {
-                                    let (y_offset, height) = self.widget_positions[index];
-                                    let widget_y = (y - y_offset as f64) / height as f64;
-                                    let widget_x = x / self.width as f64;
-
-                                    if let Some(action) = widget.on_scroll(
-                                        direction,
-                                        widget_x as f32,
-                                        widget_y as f32,
-                                    ) {
-                                        tracing::info!(
-                                            widget = widget.info().id,
-                                            direction = ?direction,
-                                            "Widget scroll action"
-                                        );
-                                        if let Err(e) = execute_action(action) {
-                                            tracing::error!(
-                                                error = %e,
-                                                "Failed to execute widget action"
-                                            );
-                                        }
-
-                                        // Redraw to show updated widget state
-                                        if let Some(layer) = &self.layer {
-                                            layer
-                                                .wl_surface()
-                                                .frame(_qh, layer.wl_surface().clone());
-                                            layer.wl_surface().commit();
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Handle horizontal scroll (future use)
-                            let _h_scroll = horizontal.discrete;
-                            // Could handle left/right scroll in future
-                        }
-                    }
+                    // Scroll input handling is disabled for desktop widgets
+                    // (KeyboardInteractivity::None means no input events)
                 }
             }
         }
@@ -486,11 +423,8 @@ impl DesktopWidget {
             shm_state,
             layer_shell,
             seat_state,
-            layer: None,
+            widget_surfaces: Vec::new(), // Created separately
             renderer: Renderer::with_theme(theme),
-            width: config.panel.width,
-            height: config.panel.height,
-            buffer_pool: None,
             widgets,
             widget_positions: Vec::new(), // Populated during first layout
             clock_widget,
@@ -503,72 +437,95 @@ impl DesktopWidget {
             panel_margins,
             metrics: WidgetMetrics::new(),
             input_state: InputState::new(),
-            configured: false,
             first_frame: true,
         }
     }
 
-    fn create_layer_surface(&mut self, qh: &QueueHandle<Self>) {
-        let surface = self.compositor_state.create_surface(qh);
+    /// Create Layer Shell surfaces for all enabled widgets
+    fn create_widget_surfaces(&mut self, qh: &QueueHandle<Self>) {
+        self.widget_surfaces.clear();
 
-        let layer = self.layer_shell.create_layer_surface(
-            qh,
-            surface,
-            Layer::Bottom, // Below windows, above wallpaper
-            Some("cosmic-desktop-widget"),
-            None, // All outputs
-        );
+        for (widget_index, widget_config) in self.config.widgets.iter().enumerate() {
+            if !widget_config.enabled {
+                continue;
+            }
 
-        // Configure position based on config
-        // Use the type-safe Position enum to convert to Layer Shell anchors
-        let anchor = self.config.panel.position.to_anchor();
-        layer.set_anchor(anchor);
-        layer.set_size(self.width, self.height);
+            // Parse position
+            let position = widget_config.position.parse::<Position>().unwrap_or_default();
 
-        // Combine config margins with auto-detected panel margins
-        let top = self.config.panel.margin.top + self.panel_margins.top;
-        let right = self.config.panel.margin.right + self.panel_margins.right;
-        let bottom = self.config.panel.margin.bottom + self.panel_margins.bottom;
-        let left = self.config.panel.margin.left + self.panel_margins.left;
+            // Create Wayland surface
+            let wl_surface = self.compositor_state.create_surface(qh);
 
-        layer.set_margin(top, right, bottom, left);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        layer.set_exclusive_zone(-1); // Don't reserve space
+            // Create Layer Shell surface
+            let layer = self.layer_shell.create_layer_surface(
+                qh,
+                wl_surface.clone(),
+                Layer::Bottom, // Below windows, above wallpaper
+                Some(format!("cosmic-widget-{}", widget_index)),
+                None, // All outputs
+            );
 
-        layer.commit();
-        self.layer = Some(layer);
+            // Configure position using position enum
+            let anchor = position.to_anchor();
+            layer.set_anchor(anchor);
+            layer.set_size(widget_config.width, widget_config.height);
 
-        // Calculate widget positions for hit-testing
-        // Simple vertical stacking for now
-        self.update_widget_positions();
+            // Combine config margins with auto-detected panel margins
+            let margin = widget_config.margin.as_ref().unwrap_or(&self.config.panel.margin);
+            let top = margin.top + self.panel_margins.top;
+            let right = margin.right + self.panel_margins.right;
+            let bottom = margin.bottom + self.panel_margins.bottom;
+            let left = margin.left + self.panel_margins.left;
 
-        tracing::info!(
-            margin_top = top,
-            margin_right = right,
-            "Layer surface created with panel-aware margins"
-        );
+            layer.set_margin(top, right, bottom, left);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            layer.set_exclusive_zone(-1); // Don't reserve space
+
+            layer.commit();
+
+            // Create widget surface
+            let surface = WidgetSurface::new(
+                layer,
+                wl_surface,
+                widget_config.width,
+                widget_config.height,
+                widget_index,
+                position,
+                widget_config.opacity,
+            );
+
+            tracing::info!(
+                widget_index = widget_index,
+                position = %position,
+                width = widget_config.width,
+                height = widget_config.height,
+                opacity = widget_config.opacity,
+                "Created widget surface"
+            );
+
+            self.widget_surfaces.push(surface);
+        }
     }
+
 
     /// Update widget layout positions for hit-testing
     ///
-    /// Calculates the (y_offset, height) for each widget based on simple
-    /// vertical stacking. This should be called when widgets change or surface resizes.
+    /// With multi-surface architecture, each widget is in its own surface,
+    /// so this method is now a no-op. Kept for backward compatibility during transition.
     fn update_widget_positions(&mut self) {
         self.widget_positions.clear();
 
-        let mut y_offset = 0.0;
+        // In multi-surface mode, each widget has its own surface
+        // so hit-testing is per-surface rather than global
         for widget in &self.widgets {
             let info = widget.info();
-            let height = info.preferred_height.min(self.height as f32);
-
-            self.widget_positions.push((y_offset, height));
-            y_offset += height;
+            // Store placeholder positions (will be removed once input handling is updated)
+            self.widget_positions.push((0.0, info.preferred_height));
         }
 
         tracing::debug!(
             widget_count = self.widgets.len(),
-            positions = ?self.widget_positions,
-            "Widget positions updated"
+            "Widget positions updated (multi-surface mode)"
         );
     }
 
@@ -591,11 +548,8 @@ impl DesktopWidget {
             }
         };
 
-        // Check if we need to resize/reposition the surface
-        let size_changed = new_config.panel.width != self.config.panel.width
-            || new_config.panel.height != self.config.panel.height;
-        let position_changed = new_config.panel.position != self.config.panel.position
-            || new_config.panel.margin != self.config.panel.margin;
+        // Note: With multi-surface architecture, individual widget changes trigger surface recreation
+        // No need to track panel-level size/position changes separately
 
         // Update theme if changed
         let theme_changed = new_config.panel.theme != self.config.panel.theme
@@ -700,101 +654,68 @@ impl DesktopWidget {
         // Update widget positions for hit-testing
         self.update_widget_positions();
 
-        // If size or position changed, we need to recreate the Layer Shell surface
-        if size_changed || position_changed {
-            tracing::info!(
-                size_changed = size_changed,
-                position_changed = position_changed,
-                "Surface configuration changed, recreating"
-            );
+        // Recreate all widget surfaces with new configuration
+        tracing::info!("Recreating widget surfaces with new configuration");
 
-            // Drop old surface (Wayland cleanup handled automatically)
-            self.layer = None;
+        // Drop old surfaces (Wayland cleanup handled automatically)
+        self.widget_surfaces.clear();
 
-            // Update dimensions
-            self.width = self.config.panel.width;
-            self.height = self.config.panel.height;
-
-            // Destroy old buffer pool (will be recreated on next draw)
-            self.buffer_pool = None;
-
-            // Create new surface with updated config
-            self.create_layer_surface(qh);
-
-            // Mark as needing first frame render
-            self.first_frame = true;
-        }
+        // Create new surfaces with updated config
+        self.create_widget_surfaces(qh);
 
         tracing::info!("Configuration reload complete");
         Ok(())
     }
 
-    fn draw(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) {
-        if !self.configured {
+    /// Draw a specific widget surface
+    fn draw_widget_surface(&mut self, surface_idx: usize, qh: &QueueHandle<Self>) {
+        // Check if surface index is valid
+        if surface_idx >= self.widget_surfaces.len() {
+            tracing::error!(surface_idx = surface_idx, "Invalid surface index");
             return;
         }
 
-        let Some(layer) = &self.layer else {
-            return;
-        };
+        let surface = &mut self.widget_surfaces[surface_idx];
 
-        // Check which widgets need updating
-        let flags = self.update_scheduler.check_updates();
-
-        // Update all dynamic widgets
-        for widget in &mut self.widgets {
-            widget.update();
-        }
-
-        // Update legacy widgets for backward compatibility
-        if let Some(ref mut clock) = self.clock_widget {
-            if flags.clock || self.first_frame {
-                clock.update();
-            }
-        }
-        if let Some(ref mut weather) = self.weather_widget {
-            if flags.weather || self.first_frame {
-                weather.update();
-            }
-        }
-
-        // Only redraw if something changed OR this is the first frame
-        if !flags.needs_redraw() && !self.first_frame {
+        if !surface.configured {
             return;
         }
 
-        // Mark first frame as rendered
-        if self.first_frame {
-            self.first_frame = false;
-            tracing::info!("Rendering first frame");
+        // Get the widget for this surface
+        let widget_index = surface.widget_index;
+        if widget_index >= self.widgets.len() {
+            tracing::error!(widget_index = widget_index, "Invalid widget index");
+            return;
         }
 
         // Create buffer pool if needed
-        if self.buffer_pool.is_none() {
-            match wayland::BufferPool::new(self.width, self.height, &self.shm_state, qh) {
-                Ok(pool) => {
-                    self.buffer_pool = Some(pool);
-                }
-                Err(e) => {
-                    tracing::error!(
-                        error = %e,
-                        width = self.width,
-                        height = self.height,
-                        "Failed to create buffer pool, skipping frame"
-                    );
-                    return;
-                }
+        if surface.buffer_pool.is_none() {
+            if let Err(e) = surface.init_buffer_pool(&self.shm_state, qh) {
+                tracing::error!(
+                    error = %e,
+                    widget_index = widget_index,
+                    "Failed to create buffer pool for widget surface"
+                );
+                return;
             }
         }
 
-        let pool = self
-            .buffer_pool
-            .as_mut()
-            .expect("Buffer pool must exist after creation check");
-        let (buffer, canvas) = match pool.get_buffer() {
+        let buffer_pool = match surface.buffer_pool.as_mut() {
+            Some(pool) => pool,
+            None => {
+                tracing::error!(widget_index = widget_index, "Buffer pool not initialized");
+                return;
+            }
+        };
+
+        let (buffer, canvas) = match buffer_pool.get_buffer() {
             Ok(buf) => buf,
             Err(e) => {
-                tracing::error!(error = %e, "Failed to get buffer, skipping frame");
+                tracing::error!(
+                    error = %e,
+                    widget_index = widget_index,
+                    "Failed to get buffer, skipping frame"
+                );
                 return;
             }
         };
@@ -802,13 +723,14 @@ impl DesktopWidget {
         // Time the render operation
         let render_timer = Timer::start();
 
-        // Use dynamic widget rendering
-        self.renderer.render_dynamic_widgets(
+        // Render single widget with its opacity
+        let widget = &self.widgets[widget_index];
+        self.renderer.render_single_widget(
             canvas,
-            self.width,
-            self.height,
-            &self.widgets,
-            &self.config,
+            surface.width,
+            surface.height,
+            widget.as_ref(),
+            surface.opacity,
         );
 
         // Record render metrics
@@ -820,29 +742,54 @@ impl DesktopWidget {
             tracing::warn!(
                 render_ms = %render_time.as_secs_f64() * 1000.0,
                 target_ms = %TARGET_RENDER_TIME_MS,
+                widget_index = widget_index,
                 "Render exceeded frame budget"
             );
         } else {
             tracing::trace!(
                 render_ms = %render_time.as_secs_f64() * 1000.0,
-                "Render complete"
+                widget_index = widget_index,
+                "Widget render complete"
             );
+        }
+
+        // Attach buffer and commit
+        surface
+            .wl_surface
+            .damage_buffer(0, 0, surface.width as i32, surface.height as i32);
+
+        if let Err(e) = buffer.attach_to(&surface.wl_surface) {
+            tracing::error!(
+                error = %e,
+                widget_index = widget_index,
+                "Failed to attach buffer to surface"
+            );
+            return;
+        }
+
+        surface.wl_surface.commit();
+
+        // Mark first frame as rendered
+        if surface.first_frame {
+            surface.first_frame = false;
+            tracing::info!(widget_index = widget_index, "First frame rendered");
+        }
+    }
+
+    /// Draw all widget surfaces
+    fn draw_all_surfaces(&mut self, qh: &QueueHandle<Self>) {
+        // Update all widgets first
+        for widget in &mut self.widgets {
+            widget.update();
+        }
+
+        // Draw each surface
+        for i in 0..self.widget_surfaces.len() {
+            self.draw_widget_surface(i, qh);
         }
 
         // Periodically log metrics summary
         self.metrics.maybe_log_summary();
-
-        // Attach buffer and commit
-        layer
-            .wl_surface()
-            .damage_buffer(0, 0, self.width as i32, self.height as i32);
-
-        if let Err(e) = buffer.attach_to(layer.wl_surface()) {
-            tracing::error!(error = %e, "Failed to attach buffer to surface");
-            return;
-        }
-
-        layer.wl_surface().commit();
     }
 }
 
@@ -914,8 +861,8 @@ fn main() -> Result<()> {
         config,
     );
 
-    // Create the layer surface
-    widget.create_layer_surface(&qh);
+    // Create widget surfaces (one per enabled widget)
+    widget.create_widget_surfaces(&qh);
 
     // Setup config file watcher for hot-reload
     let config_watcher = match Config::config_path() {

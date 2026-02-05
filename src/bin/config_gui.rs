@@ -17,7 +17,7 @@ use cosmic::{
     Application, Apply, Element,
     theme,
 };
-use cosmic_desktop_widget::{Config, Position};
+use cosmic_desktop_widget::{Config, GradientConfig, Position, SoundsConfig, ThemeColors, ThemeConfig, ThemeStyle};
 
 const APP_ID: &str = "com.github.olafkfreund.cosmic-desktop-widget-config";
 
@@ -34,6 +34,8 @@ fn main() -> cosmic::iced::Result {
 enum Tab {
     General,
     Appearance,
+    Theme,
+    Sounds,
     Widgets,
 }
 
@@ -42,6 +44,8 @@ impl Tab {
         match self {
             Tab::General => "General",
             Tab::Appearance => "Appearance",
+            Tab::Theme => "Theme",
+            Tab::Sounds => "Sounds",
             Tab::Widgets => "Widgets",
         }
     }
@@ -67,6 +71,30 @@ enum Message {
     // Appearance settings
     ThemeSelected(String),
     OpacityChanged(f32),
+
+    // Theme editor settings
+    ThemeBackgroundChanged(String),
+    ThemeTextPrimaryChanged(String),
+    ThemeTextSecondaryChanged(String),
+    ThemeAccentChanged(String),
+    ThemeBorderChanged(String),
+    ThemeCornerRadiusChanged(f32),
+    ThemeBorderWidthChanged(f32),
+    ThemeBlurToggled(bool),
+    GradientEnabledToggled(bool),
+    GradientStartChanged(String),
+    GradientEndChanged(String),
+    GradientAngleChanged(f32),
+
+    // Sound settings
+    SoundsEnabledToggled(bool),
+    SoundsMasterVolumeChanged(f32),
+    AlarmSoundSelected(String),
+    AlarmVolumeChanged(f32),
+    AlarmRepeatChanged(String),
+    NotificationSoundSelected(String),
+    NotificationVolumeChanged(f32),
+    PreviewSound(String),
 
     // Widget settings
     WidgetToggled(usize, bool),
@@ -96,8 +124,24 @@ struct ConfigApp {
     margin_bottom_input: String,
     margin_left_input: String,
 
+    // Theme editor state
+    theme_config: ThemeConfig,
+    theme_background_input: String,
+    theme_text_primary_input: String,
+    theme_text_secondary_input: String,
+    theme_accent_input: String,
+    theme_border_input: String,
+    gradient_start_input: String,
+    gradient_end_input: String,
+
+    // Sound settings state
+    alarm_repeat_input: String,
+
     // Available themes
     available_themes: Vec<String>,
+
+    // Available sounds
+    available_sounds: Vec<String>,
 
     // Save status
     save_error: Option<String>,
@@ -131,6 +175,16 @@ impl Application for ConfigApp {
             "custom".to_string(),
         ];
 
+        let available_sounds = vec![
+            "alarm".to_string(),
+            "chime".to_string(),
+            "notification".to_string(),
+            "beep".to_string(),
+        ];
+
+        // Initialize theme config from existing or default
+        let theme_config = config.theme_config.clone().unwrap_or_default();
+
         let app = ConfigApp {
             core,
             current_tab: Tab::General,
@@ -140,9 +194,19 @@ impl Application for ConfigApp {
             margin_right_input: config.panel.margin.right.to_string(),
             margin_bottom_input: config.panel.margin.bottom.to_string(),
             margin_left_input: config.panel.margin.left.to_string(),
+            theme_background_input: theme_config.colors.background.clone(),
+            theme_text_primary_input: theme_config.colors.text_primary.clone(),
+            theme_text_secondary_input: theme_config.colors.text_secondary.clone(),
+            theme_accent_input: theme_config.colors.accent.clone(),
+            theme_border_input: theme_config.colors.border.clone(),
+            gradient_start_input: theme_config.gradient.as_ref().map(|g| g.start_color.clone()).unwrap_or_else(|| "#1e1e2e".to_string()),
+            gradient_end_input: theme_config.gradient.as_ref().map(|g| g.end_color.clone()).unwrap_or_else(|| "#313244".to_string()),
+            theme_config,
+            alarm_repeat_input: config.sounds.alarm.repeat.to_string(),
             config,
             original_config,
             available_themes,
+            available_sounds,
             save_error: None,
         };
 
@@ -159,6 +223,8 @@ impl Application for ConfigApp {
         let content = match self.current_tab {
             Tab::General => self.view_general(),
             Tab::Appearance => self.view_appearance(),
+            Tab::Theme => self.view_theme(),
+            Tab::Sounds => self.view_sounds(),
             Tab::Widgets => self.view_widgets(),
         };
 
@@ -177,12 +243,26 @@ impl Application for ConfigApp {
                 button::standard(Tab::Appearance.title())
                     .on_press(Message::TabSelected(1))
             })
-            .push(if self.current_tab == Tab::Widgets {
-                button::suggested(Tab::Widgets.title())
+            .push(if self.current_tab == Tab::Theme {
+                button::suggested(Tab::Theme.title())
                     .on_press(Message::TabSelected(2))
             } else {
-                button::standard(Tab::Widgets.title())
+                button::standard(Tab::Theme.title())
                     .on_press(Message::TabSelected(2))
+            })
+            .push(if self.current_tab == Tab::Sounds {
+                button::suggested(Tab::Sounds.title())
+                    .on_press(Message::TabSelected(3))
+            } else {
+                button::standard(Tab::Sounds.title())
+                    .on_press(Message::TabSelected(3))
+            })
+            .push(if self.current_tab == Tab::Widgets {
+                button::suggested(Tab::Widgets.title())
+                    .on_press(Message::TabSelected(4))
+            } else {
+                button::standard(Tab::Widgets.title())
+                    .on_press(Message::TabSelected(4))
             })
             .spacing(4)
             .padding(8);
@@ -220,7 +300,9 @@ impl Application for ConfigApp {
                 self.current_tab = match index {
                     0 => Tab::General,
                     1 => Tab::Appearance,
-                    2 => Tab::Widgets,
+                    2 => Tab::Theme,
+                    3 => Tab::Sounds,
+                    4 => Tab::Widgets,
                     _ => Tab::General,
                 };
             }
@@ -282,6 +364,113 @@ impl Application for ConfigApp {
             }
             Message::OpacityChanged(opacity) => {
                 self.config.panel.background_opacity = Some(opacity);
+            }
+
+            // Theme editor settings
+            Message::ThemeBackgroundChanged(value) => {
+                self.theme_background_input = value.clone();
+                self.theme_config.colors.background = value;
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::ThemeTextPrimaryChanged(value) => {
+                self.theme_text_primary_input = value.clone();
+                self.theme_config.colors.text_primary = value;
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::ThemeTextSecondaryChanged(value) => {
+                self.theme_text_secondary_input = value.clone();
+                self.theme_config.colors.text_secondary = value;
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::ThemeAccentChanged(value) => {
+                self.theme_accent_input = value.clone();
+                self.theme_config.colors.accent = value;
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::ThemeBorderChanged(value) => {
+                self.theme_border_input = value.clone();
+                self.theme_config.colors.border = value;
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::ThemeCornerRadiusChanged(value) => {
+                self.theme_config.style.corner_radius = value;
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::ThemeBorderWidthChanged(value) => {
+                self.theme_config.style.border_width = value;
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::ThemeBlurToggled(enabled) => {
+                self.theme_config.style.blur_enabled = enabled;
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::GradientEnabledToggled(enabled) => {
+                if self.theme_config.gradient.is_none() {
+                    self.theme_config.gradient = Some(GradientConfig::default());
+                }
+                if let Some(ref mut gradient) = self.theme_config.gradient {
+                    gradient.enabled = enabled;
+                }
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::GradientStartChanged(value) => {
+                self.gradient_start_input = value.clone();
+                if self.theme_config.gradient.is_none() {
+                    self.theme_config.gradient = Some(GradientConfig::default());
+                }
+                if let Some(ref mut gradient) = self.theme_config.gradient {
+                    gradient.start_color = value;
+                }
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::GradientEndChanged(value) => {
+                self.gradient_end_input = value.clone();
+                if self.theme_config.gradient.is_none() {
+                    self.theme_config.gradient = Some(GradientConfig::default());
+                }
+                if let Some(ref mut gradient) = self.theme_config.gradient {
+                    gradient.end_color = value;
+                }
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+            Message::GradientAngleChanged(value) => {
+                if self.theme_config.gradient.is_none() {
+                    self.theme_config.gradient = Some(GradientConfig::default());
+                }
+                if let Some(ref mut gradient) = self.theme_config.gradient {
+                    gradient.angle = value;
+                }
+                self.config.theme_config = Some(self.theme_config.clone());
+            }
+
+            // Sound settings
+            Message::SoundsEnabledToggled(enabled) => {
+                self.config.sounds.enabled = enabled;
+            }
+            Message::SoundsMasterVolumeChanged(volume) => {
+                self.config.sounds.volume = volume;
+            }
+            Message::AlarmSoundSelected(sound) => {
+                self.config.sounds.alarm.effect = sound;
+            }
+            Message::AlarmVolumeChanged(volume) => {
+                self.config.sounds.alarm.volume = volume;
+            }
+            Message::AlarmRepeatChanged(value) => {
+                self.alarm_repeat_input = value.clone();
+                if let Ok(repeat) = value.parse::<u32>() {
+                    self.config.sounds.alarm.repeat = repeat.clamp(1, 10);
+                }
+            }
+            Message::NotificationSoundSelected(sound) => {
+                self.config.sounds.notification.effect = sound;
+            }
+            Message::NotificationVolumeChanged(volume) => {
+                self.config.sounds.notification.volume = volume;
+            }
+            Message::PreviewSound(_sound_type) => {
+                // Audio preview would be implemented here if audio feature is enabled
+                // For now, this is a no-op
             }
 
             // Widget settings
@@ -485,6 +674,280 @@ impl ConfigApp {
         let content = widget::column()
             .push(theme_section)
             .push(opacity_section)
+            .push(
+                text("For advanced theme customization, use the Theme tab.")
+                    .size(12)
+            )
+            .spacing(16)
+            .padding(16);
+
+        container(widget::scrollable(content))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    /// View for Theme editor tab
+    fn view_theme(&self) -> Element<Message> {
+        let colors_section = settings::section()
+            .title("Colors")
+            .add(
+                settings::item(
+                    "Background",
+                    text_input("#1e1e2e", &self.theme_background_input)
+                        .on_input(Message::ThemeBackgroundChanged)
+                        .width(Length::Fixed(120.0)),
+                ),
+            )
+            .add(
+                settings::item(
+                    "Primary Text",
+                    text_input("#cdd6f4", &self.theme_text_primary_input)
+                        .on_input(Message::ThemeTextPrimaryChanged)
+                        .width(Length::Fixed(120.0)),
+                ),
+            )
+            .add(
+                settings::item(
+                    "Secondary Text",
+                    text_input("#a6adc8", &self.theme_text_secondary_input)
+                        .on_input(Message::ThemeTextSecondaryChanged)
+                        .width(Length::Fixed(120.0)),
+                ),
+            )
+            .add(
+                settings::item(
+                    "Accent",
+                    text_input("#89b4fa", &self.theme_accent_input)
+                        .on_input(Message::ThemeAccentChanged)
+                        .width(Length::Fixed(120.0)),
+                ),
+            )
+            .add(
+                settings::item(
+                    "Border",
+                    text_input("#45475a", &self.theme_border_input)
+                        .on_input(Message::ThemeBorderChanged)
+                        .width(Length::Fixed(120.0)),
+                ),
+            );
+
+        let style_section = settings::section()
+            .title("Style")
+            .add(settings::item(
+                "Corner Radius",
+                widget::row()
+                    .push(
+                        slider(0.0..=30.0, self.theme_config.style.corner_radius, Message::ThemeCornerRadiusChanged)
+                            .width(Length::Fill)
+                            .step(1.0)
+                    )
+                    .push(text(format!("{:.0}px", self.theme_config.style.corner_radius)).width(Length::Fixed(60.0)))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            ))
+            .add(settings::item(
+                "Border Width",
+                widget::row()
+                    .push(
+                        slider(0.0..=5.0, self.theme_config.style.border_width, Message::ThemeBorderWidthChanged)
+                            .width(Length::Fill)
+                            .step(0.5)
+                    )
+                    .push(text(format!("{:.1}px", self.theme_config.style.border_width)).width(Length::Fixed(60.0)))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            ))
+            .add(settings::item(
+                "Enable Blur",
+                toggler(self.theme_config.style.blur_enabled)
+                    .on_toggle(Message::ThemeBlurToggled),
+            ));
+
+        let gradient_enabled = self.theme_config.gradient.as_ref().map(|g| g.enabled).unwrap_or(false);
+        let gradient_angle = self.theme_config.gradient.as_ref().map(|g| g.angle).unwrap_or(135.0);
+
+        let gradient_section = settings::section()
+            .title("Gradient")
+            .add(settings::item(
+                "Enable Gradient",
+                toggler(gradient_enabled)
+                    .on_toggle(Message::GradientEnabledToggled),
+            ))
+            .add(
+                settings::item(
+                    "Start Color",
+                    text_input("#1e1e2e", &self.gradient_start_input)
+                        .on_input(Message::GradientStartChanged)
+                        .width(Length::Fixed(120.0)),
+                ),
+            )
+            .add(
+                settings::item(
+                    "End Color",
+                    text_input("#313244", &self.gradient_end_input)
+                        .on_input(Message::GradientEndChanged)
+                        .width(Length::Fixed(120.0)),
+                ),
+            )
+            .add(settings::item(
+                "Angle",
+                widget::row()
+                    .push(
+                        slider(0.0..=360.0, gradient_angle, Message::GradientAngleChanged)
+                            .width(Length::Fill)
+                            .step(15.0)
+                    )
+                    .push(text(format!("{:.0}°", gradient_angle)).width(Length::Fixed(60.0)))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            ));
+
+        let content = widget::column()
+            .push(
+                text("Custom theme colors (set theme to 'custom' in Appearance tab to use)")
+                    .size(12)
+            )
+            .push(colors_section)
+            .push(style_section)
+            .push(gradient_section)
+            .spacing(16)
+            .padding(16);
+
+        container(widget::scrollable(content))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    /// View for Sounds settings tab
+    fn view_sounds(&self) -> Element<Message> {
+        let general_section = settings::section()
+            .title("Sound Settings")
+            .add(settings::item(
+                "Enable Sounds",
+                toggler(self.config.sounds.enabled)
+                    .on_toggle(Message::SoundsEnabledToggled),
+            ))
+            .add(settings::item(
+                "Master Volume",
+                widget::row()
+                    .push(
+                        slider(0.0..=1.0, self.config.sounds.volume, Message::SoundsMasterVolumeChanged)
+                            .width(Length::Fill)
+                            .step(0.05)
+                    )
+                    .push(text(format!("{:.0}%", self.config.sounds.volume * 100.0)).width(Length::Fixed(60.0)))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            ));
+
+        let alarm_sound_idx = self.available_sounds
+            .iter()
+            .position(|s| s == &self.config.sounds.alarm.effect);
+
+        let alarm_section = settings::section()
+            .title("Alarm Sound")
+            .add(settings::item(
+                "Sound Effect",
+                widget::row()
+                    .push(
+                        dropdown(
+                            &self.available_sounds,
+                            alarm_sound_idx,
+                            move |idx| {
+                                let sounds = vec![
+                                    "alarm".to_string(),
+                                    "chime".to_string(),
+                                    "notification".to_string(),
+                                    "beep".to_string(),
+                                ];
+                                Message::AlarmSoundSelected(sounds.get(idx).cloned().unwrap_or_default())
+                            },
+                        )
+                        .width(Length::Fixed(150.0))
+                    )
+                    .push(
+                        button::standard("Preview")
+                            .on_press(Message::PreviewSound("alarm".to_string()))
+                    )
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            ))
+            .add(settings::item(
+                "Volume",
+                widget::row()
+                    .push(
+                        slider(0.0..=1.0, self.config.sounds.alarm.volume, Message::AlarmVolumeChanged)
+                            .width(Length::Fill)
+                            .step(0.05)
+                    )
+                    .push(text(format!("{:.0}%", self.config.sounds.alarm.volume * 100.0)).width(Length::Fixed(60.0)))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            ))
+            .add(
+                settings::item(
+                    "Repeat Count",
+                    text_input("3", &self.alarm_repeat_input)
+                        .on_input(Message::AlarmRepeatChanged)
+                        .width(Length::Fixed(60.0)),
+                ),
+            );
+
+        let notification_sound_idx = self.available_sounds
+            .iter()
+            .position(|s| s == &self.config.sounds.notification.effect);
+
+        let notification_section = settings::section()
+            .title("Notification Sound")
+            .add(settings::item(
+                "Sound Effect",
+                widget::row()
+                    .push(
+                        dropdown(
+                            &self.available_sounds,
+                            notification_sound_idx,
+                            move |idx| {
+                                let sounds = vec![
+                                    "alarm".to_string(),
+                                    "chime".to_string(),
+                                    "notification".to_string(),
+                                    "beep".to_string(),
+                                ];
+                                Message::NotificationSoundSelected(sounds.get(idx).cloned().unwrap_or_default())
+                            },
+                        )
+                        .width(Length::Fixed(150.0))
+                    )
+                    .push(
+                        button::standard("Preview")
+                            .on_press(Message::PreviewSound("notification".to_string()))
+                    )
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            ))
+            .add(settings::item(
+                "Volume",
+                widget::row()
+                    .push(
+                        slider(0.0..=1.0, self.config.sounds.notification.volume, Message::NotificationVolumeChanged)
+                            .width(Length::Fill)
+                            .step(0.05)
+                    )
+                    .push(text(format!("{:.0}%", self.config.sounds.notification.volume * 100.0)).width(Length::Fixed(60.0)))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            ));
+
+        let content = widget::column()
+            .push(general_section)
+            .push(alarm_section)
+            .push(notification_section)
+            .push(
+                text("Sound playback requires the 'audio' feature to be enabled at build time.")
+                    .size(12)
+            )
             .spacing(16)
             .padding(16);
 

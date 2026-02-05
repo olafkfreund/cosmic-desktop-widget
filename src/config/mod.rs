@@ -1,5 +1,6 @@
 // Configuration management
 
+use crate::audio::SoundConfig;
 use crate::position::Position;
 use crate::theme::Theme;
 use crate::widget::WidgetInstance;
@@ -42,6 +43,215 @@ pub struct PanelConfig {
 
     /// Spacing between widgets
     pub spacing: f32,
+}
+
+/// Extended theme configuration for custom themes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeConfig {
+    /// Base colors
+    #[serde(default)]
+    pub colors: ThemeColors,
+
+    /// Style options
+    #[serde(default)]
+    pub style: ThemeStyle,
+
+    /// Gradient configuration (optional)
+    #[serde(default)]
+    pub gradient: Option<GradientConfig>,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            colors: ThemeColors::default(),
+            style: ThemeStyle::default(),
+            gradient: None,
+        }
+    }
+}
+
+/// Theme color settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeColors {
+    /// Background color (hex string like "#1e1e2e")
+    #[serde(default = "default_background_color")]
+    pub background: String,
+
+    /// Primary text color
+    #[serde(default = "default_text_primary_color")]
+    pub text_primary: String,
+
+    /// Secondary text color
+    #[serde(default = "default_text_secondary_color")]
+    pub text_secondary: String,
+
+    /// Accent color
+    #[serde(default = "default_accent_color")]
+    pub accent: String,
+
+    /// Border color
+    #[serde(default = "default_border_color")]
+    pub border: String,
+}
+
+fn default_background_color() -> String {
+    "#1e1e2e".to_string()
+}
+
+fn default_text_primary_color() -> String {
+    "#cdd6f4".to_string()
+}
+
+fn default_text_secondary_color() -> String {
+    "#a6adc8".to_string()
+}
+
+fn default_accent_color() -> String {
+    "#89b4fa".to_string()
+}
+
+fn default_border_color() -> String {
+    "#45475a".to_string()
+}
+
+impl Default for ThemeColors {
+    fn default() -> Self {
+        Self {
+            background: default_background_color(),
+            text_primary: default_text_primary_color(),
+            text_secondary: default_text_secondary_color(),
+            accent: default_accent_color(),
+            border: default_border_color(),
+        }
+    }
+}
+
+/// Theme style settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeStyle {
+    /// Background opacity (0.0 to 1.0)
+    #[serde(default = "default_opacity")]
+    pub background_opacity: f32,
+
+    /// Corner radius in pixels
+    #[serde(default = "default_corner_radius")]
+    pub corner_radius: f32,
+
+    /// Border width in pixels
+    #[serde(default = "default_border_width")]
+    pub border_width: f32,
+
+    /// Enable compositor blur hint
+    #[serde(default)]
+    pub blur_enabled: bool,
+}
+
+fn default_opacity() -> f32 {
+    0.85
+}
+
+fn default_corner_radius() -> f32 {
+    12.0
+}
+
+fn default_border_width() -> f32 {
+    1.0
+}
+
+impl Default for ThemeStyle {
+    fn default() -> Self {
+        Self {
+            background_opacity: default_opacity(),
+            corner_radius: default_corner_radius(),
+            border_width: default_border_width(),
+            blur_enabled: false,
+        }
+    }
+}
+
+/// Gradient configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GradientConfig {
+    /// Whether gradient is enabled
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Start color (hex string)
+    #[serde(default = "default_background_color")]
+    pub start_color: String,
+
+    /// End color (hex string)
+    #[serde(default = "default_gradient_end_color")]
+    pub end_color: String,
+
+    /// Gradient angle in degrees (0-360)
+    #[serde(default = "default_gradient_angle")]
+    pub angle: f32,
+}
+
+fn default_gradient_end_color() -> String {
+    "#313244".to_string()
+}
+
+fn default_gradient_angle() -> f32 {
+    135.0
+}
+
+impl Default for GradientConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            start_color: default_background_color(),
+            end_color: default_gradient_end_color(),
+            angle: default_gradient_angle(),
+        }
+    }
+}
+
+/// Global sound settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoundsConfig {
+    /// Whether sounds are enabled globally
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Master volume (0.0 to 1.0)
+    #[serde(default = "default_master_volume")]
+    pub volume: f32,
+
+    /// Alarm sound settings
+    #[serde(default)]
+    pub alarm: SoundConfig,
+
+    /// Notification sound settings
+    #[serde(default)]
+    pub notification: SoundConfig,
+}
+
+fn default_master_volume() -> f32 {
+    0.8
+}
+
+impl Default for SoundsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            volume: default_master_volume(),
+            alarm: SoundConfig {
+                enabled: true,
+                effect: "alarm".to_string(),
+                volume: 0.8,
+                repeat: 3,
+            },
+            notification: SoundConfig {
+                enabled: true,
+                effect: "notification".to_string(),
+                volume: 0.7,
+                repeat: 1,
+            },
+        }
+    }
 }
 
 impl Default for PanelConfig {
@@ -90,6 +300,14 @@ pub struct Config {
 
     /// Custom theme settings (used when theme = "custom")
     pub custom_theme: Option<Theme>,
+
+    /// Extended theme configuration (for GUI theme editor)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_config: Option<ThemeConfig>,
+
+    /// Sound settings
+    #[serde(default)]
+    pub sounds: SoundsConfig,
 }
 
 fn default_widgets() -> Vec<WidgetInstance> {
@@ -124,6 +342,8 @@ impl Default for Config {
             panel: PanelConfig::default(),
             widgets: default_widgets(),
             custom_theme: None,
+            theme_config: None,
+            sounds: SoundsConfig::default(),
         }
     }
 }

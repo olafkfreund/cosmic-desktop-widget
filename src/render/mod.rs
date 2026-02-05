@@ -8,9 +8,9 @@
 
 use crate::config::Config;
 use crate::icons::IconCache;
-use crate::text::TextRenderer;
+use crate::text::{FontWeight, TextRenderer};
 use crate::theme::Theme;
-use crate::widget::traits::Widget;
+use crate::widget::traits::{ProgressBar, ProgressColor, TextSegment, Widget};
 use crate::widget::{ClockWidget, WeatherWidget};
 use chrono::Timelike;
 use tiny_skia::*;
@@ -520,6 +520,186 @@ impl Renderer {
             .render_text(pixmap, text, x, y, size, text_color);
     }
 
+    /// Render text with specified font weight
+    fn render_text_weighted(
+        &mut self,
+        pixmap: &mut PixmapMut,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        weight: FontWeight,
+    ) {
+        let text_color = self.theme.text_primary.to_array();
+        self.text_renderer
+            .render_text_weighted(pixmap, text, x, y, size, text_color, weight);
+    }
+
+    /// Render styled text segments (with mixed weights and colors)
+    fn render_styled_text(
+        &mut self,
+        pixmap: &mut PixmapMut,
+        segments: &[TextSegment],
+        x: f32,
+        y: f32,
+        size: f32,
+    ) {
+        let mut cursor_x = x;
+        let default_color = self.theme.text_primary.to_array();
+
+        for segment in segments {
+            let color = segment.color.unwrap_or(default_color);
+            self.text_renderer.render_text_weighted(
+                pixmap,
+                &segment.text,
+                cursor_x,
+                y,
+                size,
+                color,
+                segment.weight,
+            );
+            cursor_x +=
+                self.text_renderer
+                    .measure_text_weighted(&segment.text, size, segment.weight);
+        }
+    }
+
+    /// Measure total width of styled text segments
+    fn measure_styled_text(&mut self, segments: &[TextSegment], size: f32) -> f32 {
+        segments
+            .iter()
+            .map(|seg| {
+                self.text_renderer
+                    .measure_text_weighted(&seg.text, size, seg.weight)
+            })
+            .sum()
+    }
+
+    /// Get color for progress bar based on value and color mode
+    fn get_progress_color(&self, value: f32, color_mode: &ProgressColor) -> [u8; 4] {
+        match color_mode {
+            ProgressColor::Accent => self.theme.accent.to_array(),
+            ProgressColor::Custom(color) => *color,
+            ProgressColor::Threshold {
+                green_below,
+                yellow_below,
+            } => {
+                if value < *green_below {
+                    [76, 175, 80, 255] // Green (#4CAF50)
+                } else if value < *yellow_below {
+                    [255, 193, 7, 255] // Yellow/Amber (#FFC107)
+                } else {
+                    [244, 67, 54, 255] // Red (#F44336)
+                }
+            }
+        }
+    }
+
+    /// Draw a colored progress bar with label
+    fn draw_colored_progress_bar(
+        &mut self,
+        pixmap: &mut PixmapMut,
+        bar: &ProgressBar,
+        x_start: f32,
+        x_end: f32,
+        y: f32,
+        label_size: f32,
+    ) {
+        let bar_height = 8.0;
+        let total_width = x_end - x_start;
+        let progress = bar.value.clamp(0.0, 1.0);
+
+        // Draw label on the left
+        let secondary_color = self.theme.text_secondary.to_array();
+        self.text_renderer.render_text_weighted(
+            pixmap,
+            &bar.label,
+            x_start,
+            y + label_size * 0.3,
+            label_size,
+            secondary_color,
+            FontWeight::Regular,
+        );
+
+        // Calculate bar position (after label with padding)
+        let label_width = self
+            .text_renderer
+            .measure_text_weighted(&bar.label, label_size, FontWeight::Regular);
+        let bar_x_start = x_start + label_width + 10.0;
+        let bar_width = total_width - label_width - 50.0; // Reserve space for percentage
+
+        // Draw background track
+        let mut bg_paint = Paint::default();
+        let accent = self.theme.accent.to_array();
+        bg_paint.set_color_rgba8(accent[0], accent[1], accent[2], 40);
+        bg_paint.anti_alias = true;
+
+        if let Some(bg_rect) = Rect::from_xywh(bar_x_start, y, bar_width.max(0.0), bar_height) {
+            let bg_path = PathBuilder::from_rect(bg_rect);
+            pixmap.fill_path(
+                &bg_path,
+                &bg_paint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+        }
+
+        // Draw progress fill with threshold-based color
+        if progress > 0.0 && bar_width > 0.0 {
+            let color = self.get_progress_color(progress, &bar.color);
+            let mut fg_paint = Paint::default();
+            fg_paint.set_color_rgba8(color[0], color[1], color[2], color[3]);
+            fg_paint.anti_alias = true;
+
+            let fill_width = bar_width * progress;
+            if let Some(fg_rect) = Rect::from_xywh(bar_x_start, y, fill_width, bar_height) {
+                let fg_path = PathBuilder::from_rect(fg_rect);
+                pixmap.fill_path(
+                    &fg_path,
+                    &fg_paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+
+        // Draw percentage on the right
+        let percent_text = format!("{:.0}%", progress * 100.0);
+        let percent_x = bar_x_start + bar_width + 8.0;
+        self.text_renderer.render_text_weighted(
+            pixmap,
+            &percent_text,
+            percent_x,
+            y + label_size * 0.3,
+            label_size,
+            secondary_color,
+            FontWeight::Bold,
+        );
+    }
+
+    /// Render multiple progress bars vertically
+    fn render_multi_progress(
+        &mut self,
+        pixmap: &mut PixmapMut,
+        bars: &[ProgressBar],
+        x: f32,
+        y_start: f32,
+        width: f32,
+        label_size: f32,
+    ) -> f32 {
+        let bar_spacing = label_size * 1.5;
+        let mut y = y_start;
+
+        for bar in bars {
+            self.draw_colored_progress_bar(pixmap, bar, x, x + width, y, label_size);
+            y += bar_spacing;
+        }
+
+        y - y_start // Return total height used
+    }
+
     /// Render icon with text
     /// Icon appears before text with appropriate spacing
     fn render_icon_text(
@@ -675,7 +855,14 @@ impl Renderer {
                     FontSize::Small => 16.0,
                     FontSize::Custom(s) => *s,
                 },
+                WidgetContent::StyledText { size, .. } => match size {
+                    FontSize::Large => 48.0,
+                    FontSize::Medium => 24.0,
+                    FontSize::Small => 16.0,
+                    FontSize::Custom(s) => *s,
+                },
                 WidgetContent::Progress { .. } => 16.0,
+                WidgetContent::MultiProgress { .. } => 14.0,
                 WidgetContent::Empty => continue,
             };
 
@@ -708,6 +895,13 @@ impl Renderer {
                     self.render_icon_text(&mut pixmap, &icon, &text, x, y_offset + font_size, font_size);
                     y_offset += font_size + spacing;
                 }
+                WidgetContent::StyledText { segments, .. } => {
+                    // Center styled text horizontally
+                    let total_width = self.measure_styled_text(&segments, font_size);
+                    let x = (width as f32 - total_width) / 2.0;
+                    self.render_styled_text(&mut pixmap, &segments, x, y_offset + font_size, font_size);
+                    y_offset += font_size + spacing;
+                }
                 WidgetContent::Progress { value, label } => {
                     // Render progress bar
                     let bar_y = y_offset + 10.0;
@@ -719,6 +913,18 @@ impl Renderer {
                     }
                     y_offset += 30.0 + spacing;
                 }
+                WidgetContent::MultiProgress { bars } => {
+                    // Render multiple colored progress bars
+                    let bar_height = self.render_multi_progress(
+                        &mut pixmap,
+                        &bars,
+                        padding,
+                        y_offset,
+                        width as f32 - padding * 2.0,
+                        font_size,
+                    );
+                    y_offset += bar_height + spacing;
+                }
                 WidgetContent::Empty => {}
             }
 
@@ -726,6 +932,187 @@ impl Renderer {
         }
 
         self.first_render = false;
+    }
+
+    /// Render a single widget to its own surface with custom opacity
+    pub fn render_single_widget(
+        &mut self,
+        canvas: &mut [u8],
+        width: u32,
+        height: u32,
+        widget: &dyn Widget,
+        opacity: f32,
+    ) {
+        use crate::widget::traits::{FontSize, WidgetContent};
+
+        // Create pixmap from canvas
+        let Some(mut pixmap) = PixmapMut::from_bytes(canvas, width, height) else {
+            tracing::error!("Failed to create pixmap for single widget");
+            return;
+        };
+
+        // Clear background with theme color and apply widget-specific opacity
+        let mut bg = self.theme.background.clone();
+        bg.a = (255.0 * opacity) as u8;
+        let bg_color = bg.to_tiny_skia();
+        pixmap.fill(bg_color);
+
+        // Draw rounded rectangle background
+        let corner_radius = self.theme.corner_radius;
+        self.draw_rounded_rect(&mut pixmap, width, height, corner_radius, &bg);
+
+        // Draw border with opacity applied
+        let mut border_paint = Paint::default();
+        let border_color = self.theme.border.clone();
+        let border_rgba = [
+            border_color.r,
+            border_color.g,
+            border_color.b,
+            (border_color.a as f32 * opacity) as u8,
+        ];
+        border_paint.set_color_rgba8(
+            border_rgba[0],
+            border_rgba[1],
+            border_rgba[2],
+            border_rgba[3],
+        );
+        border_paint.anti_alias = true;
+
+        let stroke = Stroke {
+            width: self.theme.border_width,
+            ..Default::default()
+        };
+
+        let path = self.create_rounded_rect_path(width as f32, height as f32, corner_radius);
+        if let Some(path) = path {
+            pixmap.stroke_path(&path, &border_paint, &stroke, Transform::identity(), None);
+        }
+
+        let padding = 10.0; // Fixed padding for individual widgets
+        let content = widget.content();
+
+        // Calculate font size based on widget preference
+        let font_size = match &content {
+            WidgetContent::Text { size, .. } => match size {
+                FontSize::Large => (height as f32 * 0.5).min(72.0),
+                FontSize::Medium => (height as f32 * 0.35).min(32.0),
+                FontSize::Small => (height as f32 * 0.25).min(20.0),
+                FontSize::Custom(s) => *s,
+            },
+            WidgetContent::MultiLine { lines } => {
+                if let Some((_, size)) = lines.first() {
+                    match size {
+                        FontSize::Large => (height as f32 * 0.4).min(48.0),
+                        FontSize::Medium => (height as f32 * 0.3).min(24.0),
+                        FontSize::Small => (height as f32 * 0.2).min(16.0),
+                        FontSize::Custom(s) => *s,
+                    }
+                } else {
+                    16.0
+                }
+            }
+            WidgetContent::IconText { size, .. } => match size {
+                FontSize::Large => (height as f32 * 0.5).min(48.0),
+                FontSize::Medium => (height as f32 * 0.35).min(28.0),
+                FontSize::Small => (height as f32 * 0.25).min(18.0),
+                FontSize::Custom(s) => *s,
+            },
+            WidgetContent::StyledText { size, .. } => match size {
+                FontSize::Large => (height as f32 * 0.5).min(72.0),
+                FontSize::Medium => (height as f32 * 0.35).min(32.0),
+                FontSize::Small => (height as f32 * 0.25).min(20.0),
+                FontSize::Custom(s) => *s,
+            },
+            WidgetContent::Progress { .. } => 16.0,
+            WidgetContent::MultiProgress { .. } => (height as f32 * 0.15).min(14.0),
+            WidgetContent::Empty => return,
+        };
+
+        // Render widget content centered
+        let y_center = height as f32 / 2.0;
+
+        match content {
+            WidgetContent::Text { text, .. } => {
+                // Center text horizontally and vertically
+                let text_width = self.text_renderer.measure_text(&text, font_size);
+                let x = ((width as f32) - text_width) / 2.0;
+                let y = y_center + font_size * 0.35;
+                self.render_text(&mut pixmap, &text, x, y, font_size);
+            }
+            WidgetContent::MultiLine { lines } => {
+                let total_height: f32 = lines.len() as f32 * font_size * 1.2;
+                let mut y = y_center - total_height / 2.0 + font_size;
+
+                for (text, size) in lines {
+                    let fs = match size {
+                        FontSize::Large => (height as f32 * 0.4).min(36.0),
+                        FontSize::Medium => (height as f32 * 0.3).min(22.0),
+                        FontSize::Small => (height as f32 * 0.2).min(14.0),
+                        FontSize::Custom(s) => s,
+                    };
+                    let text_width = self.text_renderer.measure_text(&text, fs);
+                    let x = ((width as f32) - text_width) / 2.0;
+                    self.render_text(&mut pixmap, &text, x, y, fs);
+                    y += fs * 1.2;
+                }
+            }
+            WidgetContent::IconText { icon, text, .. } => {
+                let text_width = self.text_renderer.measure_text(&text, font_size);
+                let icon_size = (font_size * 1.2) as u32;
+                let icon_spacing = font_size * 0.3;
+                let total_width = icon_size as f32 + icon_spacing + text_width;
+                let x_start = ((width as f32) - total_width) / 2.0;
+                let y = y_center + font_size * 0.35;
+
+                self.render_icon_text(&mut pixmap, &icon, &text, x_start, y, font_size);
+            }
+            WidgetContent::StyledText { segments, .. } => {
+                // Center styled text horizontally and vertically
+                let total_width = self.measure_styled_text(&segments, font_size);
+                let x = ((width as f32) - total_width) / 2.0;
+                let y = y_center + font_size * 0.35;
+                self.render_styled_text(&mut pixmap, &segments, x, y, font_size);
+            }
+            WidgetContent::Progress { value, label } => {
+                let bar_y = y_center - 4.0;
+                self.draw_progress_bar(
+                    &mut pixmap,
+                    padding,
+                    width as f32 - padding,
+                    bar_y,
+                    value,
+                );
+                if let Some(label_text) = label {
+                    let label_width = self.text_renderer.measure_text(&label_text, 14.0);
+                    let x = ((width as f32) - label_width) / 2.0;
+                    self.render_text(&mut pixmap, &label_text, x, bar_y + 24.0, 14.0);
+                }
+            }
+            WidgetContent::MultiProgress { bars } => {
+                // Calculate total height of progress bars
+                let bar_spacing = font_size * 1.5;
+                let total_bars_height = bars.len() as f32 * bar_spacing;
+                let y_start = y_center - total_bars_height / 2.0 + bar_spacing / 2.0;
+
+                self.render_multi_progress(
+                    &mut pixmap,
+                    &bars,
+                    padding,
+                    y_start,
+                    width as f32 - padding * 2.0,
+                    font_size,
+                );
+            }
+            WidgetContent::Empty => {}
+        }
+
+        tracing::trace!(
+            widget = widget.info().id,
+            width = width,
+            height = height,
+            opacity = opacity,
+            "Rendered single widget"
+        );
     }
 }
 

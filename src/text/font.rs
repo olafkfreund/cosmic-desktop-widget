@@ -1,41 +1,66 @@
 // Font loading and management
 
 use fontdue::{Font, FontSettings};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
+/// Font weight for text rendering
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FontWeight {
+    /// Regular/normal weight
+    #[default]
+    Regular,
+    /// Bold weight
+    Bold,
+}
+
 pub struct FontManager {
-    font: Arc<Font>,
+    fonts: HashMap<FontWeight, Arc<Font>>,
 }
 
 impl FontManager {
     pub fn new() -> Self {
-        // Try to find fonts using multiple strategies
+        let mut fonts = HashMap::new();
 
+        // Try to find fonts using multiple strategies
         // Strategy 1: Use fontconfig via fc-list to find fonts dynamically
-        if let Some(manager) = Self::try_fontconfig() {
-            return manager;
+        if let Some((regular, bold)) = Self::try_fontconfig() {
+            fonts.insert(FontWeight::Regular, regular);
+            if let Some(bold_font) = bold {
+                fonts.insert(FontWeight::Bold, bold_font);
+            }
+            return Self { fonts };
         }
 
         // Strategy 2: Try well-known paths
-        if let Some(manager) = Self::try_known_paths() {
-            return manager;
+        if let Some((regular, bold)) = Self::try_known_paths() {
+            fonts.insert(FontWeight::Regular, regular);
+            if let Some(bold_font) = bold {
+                fonts.insert(FontWeight::Bold, bold_font);
+            }
+            return Self { fonts };
         }
 
         // Strategy 3: Search common font directories
-        if let Some(manager) = Self::try_search_dirs() {
-            return manager;
+        if let Some((regular, bold)) = Self::try_search_dirs() {
+            fonts.insert(FontWeight::Regular, regular);
+            if let Some(bold_font) = bold {
+                fonts.insert(FontWeight::Bold, bold_font);
+            }
+            return Self { fonts };
         }
 
         panic!("No usable font found. Please install DejaVu Sans or Liberation Sans fonts.");
     }
 
-    fn try_fontconfig() -> Option<Self> {
-        // Try to use fc-match to find a suitable font
+    fn try_fontconfig() -> Option<(Arc<Font>, Option<Arc<Font>>)> {
+        // Try to use fc-match to find suitable fonts
         use std::process::Command;
 
+        // Get regular font
         let output = Command::new("fc-match")
-            .args(["--format=%{file}", "sans"])
+            .args(["--format=%{file}", "sans:weight=regular"])
             .output()
             .ok()?;
 
@@ -43,20 +68,43 @@ impl FontManager {
             return None;
         }
 
-        let path = String::from_utf8(output.stdout).ok()?;
-        let path = path.trim();
+        let regular_path = String::from_utf8(output.stdout).ok()?;
+        let regular_path = regular_path.trim();
 
-        if path.is_empty() {
+        if regular_path.is_empty() {
             return None;
         }
 
-        Self::try_load_font(path)
+        let regular_font = Self::load_font_file(regular_path)?;
+        debug!("Loaded regular font from: {}", regular_path);
+
+        // Try to get bold font
+        let bold_font = Command::new("fc-match")
+            .args(["--format=%{file}", "sans:weight=bold"])
+            .output()
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    let bold_path = String::from_utf8(output.stdout).ok()?;
+                    let bold_path = bold_path.trim();
+                    if !bold_path.is_empty() && bold_path != regular_path {
+                        let font = Self::load_font_file(bold_path)?;
+                        debug!("Loaded bold font from: {}", bold_path);
+                        Some(font)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+
+        Some((regular_font, bold_font))
     }
 
-    fn try_known_paths() -> Option<Self> {
+    fn try_known_paths() -> Option<(Arc<Font>, Option<Arc<Font>>)> {
         // Standard paths across different Linux distributions
-        let font_paths = [
-            // Standard Linux paths
+        let regular_paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/TTF/DejaVuSans.ttf",
             "/usr/share/fonts/noto/NotoSans-Regular.ttf",
@@ -65,15 +113,30 @@ impl FontManager {
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         ];
 
-        for path in &font_paths {
-            if let Some(manager) = Self::try_load_font(path) {
-                return Some(manager);
+        let bold_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+            "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/gnu-free/FreeSansBold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        ];
+
+        for (i, path) in regular_paths.iter().enumerate() {
+            if let Some(regular_font) = Self::load_font_file(path) {
+                debug!("Loaded regular font from: {}", path);
+                let bold_font = bold_paths.get(i).and_then(|bold_path| {
+                    let font = Self::load_font_file(bold_path)?;
+                    debug!("Loaded bold font from: {}", bold_path);
+                    Some(font)
+                });
+                return Some((regular_font, bold_font));
             }
         }
         None
     }
 
-    fn try_search_dirs() -> Option<Self> {
+    fn try_search_dirs() -> Option<(Arc<Font>, Option<Arc<Font>>)> {
         // Search common font directories
         let search_dirs = [
             "/usr/share/fonts",
@@ -85,21 +148,21 @@ impl FontManager {
         if let Ok(xdg_dirs) = std::env::var("XDG_DATA_DIRS") {
             for dir in xdg_dirs.split(':') {
                 let font_dir = format!("{}/fonts", dir);
-                if let Some(manager) = Self::search_dir_for_font(&font_dir) {
-                    return Some(manager);
+                if let Some(result) = Self::search_dir_for_fonts(&font_dir) {
+                    return Some(result);
                 }
             }
         }
 
         for dir in &search_dirs {
-            if let Some(manager) = Self::search_dir_for_font(dir) {
-                return Some(manager);
+            if let Some(result) = Self::search_dir_for_fonts(dir) {
+                return Some(result);
             }
         }
         None
     }
 
-    fn search_dir_for_font(dir: &str) -> Option<Self> {
+    fn search_dir_for_fonts(dir: &str) -> Option<(Arc<Font>, Option<Arc<Font>>)> {
         use std::fs;
 
         let path = std::path::Path::new(dir);
@@ -107,14 +170,22 @@ impl FontManager {
             return None;
         }
 
-        // Look for common sans-serif fonts
-        let font_names = [
+        // Look for common sans-serif fonts (regular and bold)
+        let regular_font_names = [
             "DejaVuSans.ttf",
             "NotoSans-Regular.ttf",
             "LiberationSans-Regular.ttf",
         ];
+        let bold_font_names = [
+            "DejaVuSans-Bold.ttf",
+            "NotoSans-Bold.ttf",
+            "LiberationSans-Bold.ttf",
+        ];
 
-        fn visit_dirs(dir: &std::path::Path, font_names: &[&str]) -> Option<String> {
+        fn visit_dirs(
+            dir: &std::path::Path,
+            font_names: &[&str],
+        ) -> Option<String> {
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
@@ -132,21 +203,25 @@ impl FontManager {
             None
         }
 
-        if let Some(font_path) = visit_dirs(path, &font_names) {
-            return Self::try_load_font(&font_path);
-        }
-        None
+        // Find regular font
+        let regular_path = visit_dirs(path, &regular_font_names)?;
+        let regular_font = Self::load_font_file(&regular_path)?;
+        debug!("Loaded regular font from: {}", regular_path);
+
+        // Try to find bold font
+        let bold_font = visit_dirs(path, &bold_font_names).and_then(|bold_path| {
+            let font = Self::load_font_file(&bold_path)?;
+            debug!("Loaded bold font from: {}", bold_path);
+            Some(font)
+        });
+
+        Some((regular_font, bold_font))
     }
 
-    fn try_load_font(path: &str) -> Option<Self> {
+    fn load_font_file(path: &str) -> Option<Arc<Font>> {
         let font_data = std::fs::read(path).ok()?;
         match Font::from_bytes(font_data, FontSettings::default()) {
-            Ok(font) => {
-                debug!("Loaded font from: {}", path);
-                Some(Self {
-                    font: Arc::new(font),
-                })
-            }
+            Ok(font) => Some(Arc::new(font)),
             Err(e) => {
                 warn!("Failed to parse font at {}: {}", path, e);
                 None
@@ -154,8 +229,22 @@ impl FontManager {
         }
     }
 
-    pub fn font(&self) -> &Font {
-        &self.font
+    /// Get font by weight, falling back to regular if requested weight unavailable
+    pub fn font(&self, weight: FontWeight) -> &Font {
+        self.fonts
+            .get(&weight)
+            .or_else(|| self.fonts.get(&FontWeight::Regular))
+            .expect("At least regular font must be loaded")
+    }
+
+    /// Get regular font (convenience method for backward compatibility)
+    pub fn font_regular(&self) -> &Font {
+        self.font(FontWeight::Regular)
+    }
+
+    /// Check if bold font is available
+    pub fn has_bold(&self) -> bool {
+        self.fonts.contains_key(&FontWeight::Bold)
     }
 }
 
@@ -172,8 +261,31 @@ mod tests {
     #[test]
     fn test_font_manager_creation() {
         let manager = FontManager::new();
-        let font = manager.font();
+        let font = manager.font(FontWeight::Regular);
         // Just verify we got a font
+        assert!(font.horizontal_line_metrics(16.0).is_some());
+    }
+
+    #[test]
+    fn test_font_weight_default() {
+        assert_eq!(FontWeight::default(), FontWeight::Regular);
+    }
+
+    #[test]
+    fn test_font_regular_convenience() {
+        let manager = FontManager::new();
+        let regular = manager.font_regular();
+        let also_regular = manager.font(FontWeight::Regular);
+        // Both should be valid fonts
+        assert!(regular.horizontal_line_metrics(16.0).is_some());
+        assert!(also_regular.horizontal_line_metrics(16.0).is_some());
+    }
+
+    #[test]
+    fn test_bold_fallback() {
+        let manager = FontManager::new();
+        // Even if bold isn't available, requesting it should not panic
+        let font = manager.font(FontWeight::Bold);
         assert!(font.horizontal_line_metrics(16.0).is_some());
     }
 }

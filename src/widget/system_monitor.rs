@@ -8,7 +8,7 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use tracing::debug;
 
 use super::registry::DynWidgetFactory;
-use super::traits::{FontSize, Widget, WidgetContent, WidgetInfo};
+use super::traits::{FontSize, ProgressBar, ProgressColor, Widget, WidgetContent, WidgetInfo};
 
 /// System Monitor widget showing CPU, RAM, and optionally disk usage
 pub struct SystemMonitorWidget {
@@ -153,10 +153,17 @@ impl SystemMonitorWidget {
 
 impl Widget for SystemMonitorWidget {
     fn info(&self) -> WidgetInfo {
+        // Calculate preferred height based on number of enabled bars
+        let bar_count = [self.show_cpu, self.show_memory, self.show_disk]
+            .iter()
+            .filter(|&&b| b)
+            .count();
+        let preferred_height = (bar_count as f32 * 25.0).max(40.0);
+
         WidgetInfo {
             id: "system_monitor",
             name: "System Monitor",
-            preferred_height: 40.0,
+            preferred_height,
             min_height: 30.0,
             expand: false,
         }
@@ -192,9 +199,58 @@ impl Widget for SystemMonitorWidget {
     }
 
     fn content(&self) -> WidgetContent {
-        WidgetContent::Text {
-            text: self.display_string(),
-            size: FontSize::Medium,
+        let mut bars = Vec::new();
+
+        if self.show_cpu {
+            bars.push(ProgressBar {
+                label: "CPU".to_string(),
+                value: self.cpu_usage / 100.0,
+                color: ProgressColor::Threshold {
+                    green_below: 0.6,
+                    yellow_below: 0.85,
+                },
+            });
+        }
+
+        if self.show_memory && self.memory_total > 0 {
+            let mem_percent = self.memory_used as f32 / self.memory_total as f32;
+            bars.push(ProgressBar {
+                label: format!(
+                    "RAM {}/{}",
+                    Self::format_bytes(self.memory_used),
+                    Self::format_bytes(self.memory_total)
+                ),
+                value: mem_percent,
+                color: ProgressColor::Threshold {
+                    green_below: 0.7,
+                    yellow_below: 0.9,
+                },
+            });
+        }
+
+        if self.show_disk && self.disk_total > 0 {
+            let disk_percent = self.disk_used as f32 / self.disk_total as f32;
+            bars.push(ProgressBar {
+                label: format!(
+                    "Disk {}/{}",
+                    Self::format_bytes(self.disk_used),
+                    Self::format_bytes(self.disk_total)
+                ),
+                value: disk_percent,
+                color: ProgressColor::Threshold {
+                    green_below: 0.7,
+                    yellow_below: 0.9,
+                },
+            });
+        }
+
+        if bars.is_empty() {
+            WidgetContent::Text {
+                text: "System Monitor".to_string(),
+                size: FontSize::Medium,
+            }
+        } else {
+            WidgetContent::MultiProgress { bars }
         }
     }
 

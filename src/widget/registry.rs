@@ -298,6 +298,8 @@ impl DynWidgetFactory for WeatherWidgetFactory {
 // Widget Instance Configuration
 // ============================================================================
 
+use crate::config::Margin;
+
 /// Configuration for a single widget instance
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WidgetInstance {
@@ -313,6 +315,26 @@ pub struct WidgetInstance {
     #[serde(default)]
     pub id: Option<String>,
 
+    /// Position on screen (e.g., "top-right", "center")
+    #[serde(default = "default_position")]
+    pub position: String,
+
+    /// Widget width in pixels
+    #[serde(default = "default_widget_width")]
+    pub width: u32,
+
+    /// Widget height in pixels
+    #[serde(default = "default_widget_height")]
+    pub height: u32,
+
+    /// Opacity (0.0 = fully transparent, 1.0 = fully opaque)
+    #[serde(default = "default_opacity")]
+    pub opacity: f32,
+
+    /// Margins from screen edges
+    #[serde(default)]
+    pub margin: Option<Margin>,
+
     /// Widget-specific configuration
     #[serde(default)]
     pub config: toml::Table,
@@ -322,6 +344,22 @@ fn default_true() -> bool {
     true
 }
 
+fn default_position() -> String {
+    "top-right".to_string()
+}
+
+fn default_widget_width() -> u32 {
+    250
+}
+
+fn default_widget_height() -> u32 {
+    80
+}
+
+fn default_opacity() -> f32 {
+    0.85
+}
+
 impl WidgetInstance {
     /// Create a new widget instance configuration
     pub fn new(widget_type: &str) -> Self {
@@ -329,6 +367,11 @@ impl WidgetInstance {
             widget_type: widget_type.to_string(),
             enabled: true,
             id: None,
+            position: default_position(),
+            width: default_widget_width(),
+            height: default_widget_height(),
+            opacity: default_opacity(),
+            margin: None,
             config: toml::Table::new(),
         }
     }
@@ -339,6 +382,11 @@ impl WidgetInstance {
             widget_type: widget_type.to_string(),
             enabled: true,
             id: None,
+            position: default_position(),
+            width: default_widget_width(),
+            height: default_widget_height(),
+            opacity: default_opacity(),
+            margin: None,
             config,
         }
     }

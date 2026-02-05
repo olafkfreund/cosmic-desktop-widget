@@ -4,6 +4,6 @@ mod font;
 mod glyph_cache;
 mod renderer;
 
-pub use font::FontManager;
+pub use font::{FontManager, FontWeight};
 pub use glyph_cache::GlyphCache;
 pub use renderer::TextRenderer;

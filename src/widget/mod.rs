@@ -55,8 +55,8 @@ pub use registry::{DynWidgetFactory, WidgetInstance, WidgetRegistry};
 pub use stocks::{StockData, StocksWidget};
 pub use system_monitor::SystemMonitorWidget;
 pub use traits::{
-    FontSize, MouseButton, ScrollDirection, Widget, WidgetAction, WidgetConfig, WidgetContent,
-    WidgetFactory, WidgetInfo,
+    FontSize, MouseButton, ProgressBar, ProgressColor, ScrollDirection, TextSegment, Widget,
+    WidgetAction, WidgetConfig, WidgetContent, WidgetFactory, WidgetInfo,
 };
 
 use crate::error::{WeatherError, WeatherResult};
