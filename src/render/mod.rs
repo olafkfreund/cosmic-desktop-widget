@@ -426,29 +426,48 @@ impl Renderer {
         }
     }
 
-    /// Create a path for a rounded rectangle
+    /// Create a path for a rounded rectangle with proper circular corners
     fn create_rounded_rect_path(&self, width: f32, height: f32, radius: f32) -> Option<Path> {
         let r = radius.min(width / 2.0).min(height / 2.0);
+
+        // For radius 0, just return a simple rectangle
+        if r <= 0.5 {
+            return Some(PathBuilder::from_rect(Rect::from_xywh(0.0, 0.0, width, height)?));
+        }
+
         let mut pb = PathBuilder::new();
+
+        // Kappa constant for cubic bezier approximation of a quarter circle
+        // This produces proper circular arcs, not the elliptical shapes quad_to creates
+        const KAPPA: f32 = 0.5522847498;
+        let k = r * KAPPA;
 
         // Start at top-left after the corner
         pb.move_to(r, 0.0);
 
-        // Top edge and top-right corner
+        // Top edge
         pb.line_to(width - r, 0.0);
-        pb.quad_to(width, 0.0, width, r);
 
-        // Right edge and bottom-right corner
+        // Top-right corner (proper circular arc using cubic bezier)
+        pb.cubic_to(width - r + k, 0.0, width, r - k, width, r);
+
+        // Right edge
         pb.line_to(width, height - r);
-        pb.quad_to(width, height, width - r, height);
 
-        // Bottom edge and bottom-left corner
+        // Bottom-right corner
+        pb.cubic_to(width, height - r + k, width - r + k, height, width - r, height);
+
+        // Bottom edge
         pb.line_to(r, height);
-        pb.quad_to(0.0, height, 0.0, height - r);
 
-        // Left edge and top-left corner
+        // Bottom-left corner
+        pb.cubic_to(r - k, height, 0.0, height - r + k, 0.0, height - r);
+
+        // Left edge
         pb.line_to(0.0, r);
-        pb.quad_to(0.0, 0.0, r, 0.0);
+
+        // Top-left corner
+        pb.cubic_to(0.0, r - k, r - k, 0.0, r, 0.0);
 
         pb.close();
         pb.finish()

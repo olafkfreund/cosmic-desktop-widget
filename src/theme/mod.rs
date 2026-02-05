@@ -78,7 +78,7 @@ impl Theme {
             opacity: 0.9,
             blur_enabled: false,
             border_width: 2.0,
-            corner_radius: 8.0,
+            corner_radius: 16.0, // More visible rounded corners
         }
     }
 
@@ -108,7 +108,7 @@ impl Theme {
             opacity: 0.5,
             blur_enabled: false,
             border_width: 1.0,
-            corner_radius: 12.0,
+            corner_radius: 16.0, // More visible rounded corners
         }
     }
 

@@ -58,7 +58,67 @@ impl FontManager {
         // Try to use fc-match to find suitable fonts
         use std::process::Command;
 
-        // Get regular font
+        // Preferred fonts in order - modern, clean, readable
+        let preferred_fonts = [
+            "Fira Sans",      // Modern, clean, excellent readability
+            "Inter",          // Very popular, highly readable
+            "Roboto",         // Google's modern sans-serif
+            "Adwaita Sans",   // GNOME default
+            "Cantarell",      // GNOME alternative
+            "Noto Sans",      // Google's universal font
+            "DejaVu Sans",    // Fallback, widely available
+            "Liberation Sans", // Another common fallback
+        ];
+
+        // Try each preferred font in order
+        for font_family in &preferred_fonts {
+            let regular_query = format!("{}:weight=regular", font_family);
+            let output = Command::new("fc-match")
+                .args(["--format=%{file}", &regular_query])
+                .output()
+                .ok();
+
+            if let Some(output) = output {
+                if output.status.success() {
+                    let regular_path = String::from_utf8(output.stdout).ok();
+                    if let Some(regular_path) = regular_path {
+                        let regular_path = regular_path.trim();
+                        // Verify this is actually the font we asked for (not a fallback)
+                        if !regular_path.is_empty() && regular_path.to_lowercase().contains(&font_family.to_lowercase().replace(' ', "")) {
+                            if let Some(regular_font) = Self::load_font_file(regular_path) {
+                                debug!("Loaded regular font: {} from {}", font_family, regular_path);
+
+                                // Try to get matching bold font
+                                let bold_query = format!("{}:weight=bold", font_family);
+                                let bold_font = Command::new("fc-match")
+                                    .args(["--format=%{file}", &bold_query])
+                                    .output()
+                                    .ok()
+                                    .and_then(|output| {
+                                        if output.status.success() {
+                                            let bold_path = String::from_utf8(output.stdout).ok()?;
+                                            let bold_path = bold_path.trim();
+                                            if !bold_path.is_empty() && bold_path != regular_path {
+                                                let font = Self::load_font_file(bold_path)?;
+                                                debug!("Loaded bold font: {} from {}", font_family, bold_path);
+                                                Some(font)
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    });
+
+                                return Some((regular_font, bold_font));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: just get any sans font
         let output = Command::new("fc-match")
             .args(["--format=%{file}", "sans:weight=regular"])
             .output()
