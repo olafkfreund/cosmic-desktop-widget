@@ -16,7 +16,7 @@ use smithay_client_toolkit::{
     },
     shell::{
         wlr_layer::{
-            Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
+            KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
             LayerSurfaceConfigure,
         },
         WaylandSurface,
@@ -39,7 +39,7 @@ use cosmic_desktop_widget::{
     surface::WidgetSurface,
     update::UpdateScheduler,
     widget::{ClockWidget, WeatherWidget, Widget, WidgetRegistry},
-    InputState, Position,
+    InputState,
 };
 
 /// Main application state
@@ -450,8 +450,22 @@ impl DesktopWidget {
                 continue;
             }
 
-            // Parse position
-            let position = widget_config.position.parse::<Position>().unwrap_or_default();
+            // Get effective settings (widget-specific or panel defaults)
+            let position = widget_config.effective_position(&self.config.panel.position);
+            let width = widget_config.effective_width(self.config.panel.width);
+            let height = widget_config.effective_height(self.config.panel.height);
+            let opacity = widget_config.effective_opacity(
+                self.config.panel.background_opacity.unwrap_or(0.9)
+            );
+
+            // Get effective margins (widget-specific or panel defaults)
+            let margin = widget_config.effective_margin(&self.config.panel.margin);
+
+            // Combine with auto-detected panel margins
+            let margin_top = margin.top + self.panel_margins.top;
+            let margin_right = margin.right + self.panel_margins.right;
+            let margin_bottom = margin.bottom + self.panel_margins.bottom;
+            let margin_left = margin.left + self.panel_margins.left;
 
             // Create Wayland surface
             let wl_surface = self.compositor_state.create_surface(qh);
@@ -468,16 +482,8 @@ impl DesktopWidget {
             // Configure position using position enum
             let anchor = position.to_anchor();
             layer.set_anchor(anchor);
-            layer.set_size(widget_config.width, widget_config.height);
-
-            // Combine config margins with auto-detected panel margins
-            let margin = widget_config.margin.as_ref().unwrap_or(&self.config.panel.margin);
-            let top = margin.top + self.panel_margins.top;
-            let right = margin.right + self.panel_margins.right;
-            let bottom = margin.bottom + self.panel_margins.bottom;
-            let left = margin.left + self.panel_margins.left;
-
-            layer.set_margin(top, right, bottom, left);
+            layer.set_size(width, height);
+            layer.set_margin(margin_top, margin_right, margin_bottom, margin_left);
             layer.set_keyboard_interactivity(KeyboardInteractivity::None);
             layer.set_exclusive_zone(-1); // Don't reserve space
 
@@ -487,19 +493,19 @@ impl DesktopWidget {
             let surface = WidgetSurface::new(
                 layer,
                 wl_surface,
-                widget_config.width,
-                widget_config.height,
+                width,
+                height,
                 widget_index,
                 position,
-                widget_config.opacity,
+                opacity,
             );
 
             tracing::info!(
                 widget_index = widget_index,
                 position = %position,
-                width = widget_config.width,
-                height = widget_config.height,
-                opacity = widget_config.opacity,
+                width = width,
+                height = height,
+                opacity = opacity,
                 "Created widget surface"
             );
 

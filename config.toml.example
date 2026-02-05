@@ -1,0 +1,113 @@
+# COSMIC Desktop Widget Configuration
+# Example showing per-widget positioning and appearance customization
+
+# Global panel settings (default values for widgets without custom settings)
+[panel]
+width = 450
+height = 180
+position = "top-right"
+theme = "cosmic_dark"
+padding = 20.0
+spacing = 10.0
+
+[panel.margin]
+top = 10
+right = 20
+bottom = 0
+left = 0
+
+# Individual widget configurations
+# Each widget can override position, dimensions, margins, opacity, and theme
+
+# Clock widget - Large display in top-right corner
+[[widgets]]
+type = "clock"
+enabled = true
+# Per-widget positioning (optional - falls back to panel defaults if omitted)
+position = "top-right"
+width = 300
+height = 100
+opacity = 0.85
+# Per-widget margins (optional - individual margins can be specified)
+margin_top = 10
+margin_right = 20
+margin_bottom = 0
+margin_left = 0
+
+[widgets.config]
+format = "24h"
+show_seconds = true
+show_date = false
+
+# Weather widget - Custom position and size
+[[widgets]]
+type = "weather"
+enabled = true
+position = "top-right"
+width = 320
+height = 60
+opacity = 0.8
+# Can specify only the margins you want to override
+margin_top = 120  # Positioned below clock
+margin_right = 20
+
+[widgets.config]
+city = "London"
+api_key = ""  # Add your OpenWeatherMap API key
+temperature_unit = "celsius"
+update_interval = 600
+
+# System monitor - Centered at bottom with custom theme
+[[widgets]]
+type = "system_monitor"
+enabled = false
+position = "bottom-center"
+width = 400
+height = 50
+opacity = 0.75
+margin_bottom = 20
+# Per-widget theme override (optional)
+theme_override = "transparent_dark"
+
+[widgets.config]
+show_cpu = true
+show_memory = true
+show_disk = false
+
+# Quotes widget - Bottom left corner, very transparent
+[[widgets]]
+type = "quotes"
+enabled = false
+position = "bottom-left"
+width = 500
+height = 60
+opacity = 0.7
+margin_bottom = 20
+margin_left = 20
+
+# Battery widget - Top left corner with glass theme
+[[widgets]]
+type = "battery"
+enabled = false
+position = "top-left"
+width = 200
+height = 40
+opacity = 0.9
+margin_top = 10
+margin_left = 20
+theme_override = "glass"
+
+# MPRIS Media Player - Center screen, fully opaque
+[[widgets]]
+type = "mpris"
+enabled = false
+position = "center"
+width = 350
+height = 80
+opacity = 1.0
+theme_override = "cosmic_dark"
+
+[widgets.config]
+show_artist = true
+show_album = true
+show_status = true

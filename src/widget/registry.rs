@@ -299,6 +299,7 @@ impl DynWidgetFactory for WeatherWidgetFactory {
 // ============================================================================
 
 use crate::config::Margin;
+use crate::position::Position;
 
 /// Configuration for a single widget instance
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -315,49 +316,55 @@ pub struct WidgetInstance {
     #[serde(default)]
     pub id: Option<String>,
 
-    /// Position on screen (e.g., "top-right", "center")
-    #[serde(default = "default_position")]
-    pub position: String,
-
-    /// Widget width in pixels
-    #[serde(default = "default_widget_width")]
-    pub width: u32,
-
-    /// Widget height in pixels
-    #[serde(default = "default_widget_height")]
-    pub height: u32,
-
-    /// Opacity (0.0 = fully transparent, 1.0 = fully opaque)
-    #[serde(default = "default_opacity")]
-    pub opacity: f32,
-
-    /// Margins from screen edges
-    #[serde(default)]
-    pub margin: Option<Margin>,
-
     /// Widget-specific configuration
     #[serde(default)]
     pub config: toml::Table,
+
+    // NEW: Per-widget positioning and appearance
+    // All optional - fall back to panel defaults if not specified
+
+    /// Per-widget position on screen (optional - falls back to panel default)
+    /// Values: "top-left", "top-right", "center", etc.
+    #[serde(default)]
+    pub position: Option<String>,
+
+    /// Per-widget width in pixels (optional)
+    #[serde(default)]
+    pub width: Option<u32>,
+
+    /// Per-widget height in pixels (optional)
+    #[serde(default)]
+    pub height: Option<u32>,
+
+    /// Per-widget top margin (optional)
+    #[serde(default)]
+    pub margin_top: Option<i32>,
+
+    /// Per-widget right margin (optional)
+    #[serde(default)]
+    pub margin_right: Option<i32>,
+
+    /// Per-widget bottom margin (optional)
+    #[serde(default)]
+    pub margin_bottom: Option<i32>,
+
+    /// Per-widget left margin (optional)
+    #[serde(default)]
+    pub margin_left: Option<i32>,
+
+    /// Per-widget opacity (optional - falls back to panel default)
+    /// Range: 0.0 (fully transparent) to 1.0 (fully opaque)
+    #[serde(default)]
+    pub opacity: Option<f32>,
+
+    /// Per-widget theme override (optional)
+    /// Overrides the panel theme for this widget only
+    #[serde(default)]
+    pub theme_override: Option<String>,
 }
 
 fn default_true() -> bool {
     true
-}
-
-fn default_position() -> String {
-    "top-right".to_string()
-}
-
-fn default_widget_width() -> u32 {
-    250
-}
-
-fn default_widget_height() -> u32 {
-    80
-}
-
-fn default_opacity() -> f32 {
-    0.85
 }
 
 impl WidgetInstance {
@@ -367,12 +374,16 @@ impl WidgetInstance {
             widget_type: widget_type.to_string(),
             enabled: true,
             id: None,
-            position: default_position(),
-            width: default_widget_width(),
-            height: default_widget_height(),
-            opacity: default_opacity(),
-            margin: None,
             config: toml::Table::new(),
+            position: None,
+            width: None,
+            height: None,
+            margin_top: None,
+            margin_right: None,
+            margin_bottom: None,
+            margin_left: None,
+            opacity: None,
+            theme_override: None,
         }
     }
 
@@ -382,18 +393,89 @@ impl WidgetInstance {
             widget_type: widget_type.to_string(),
             enabled: true,
             id: None,
-            position: default_position(),
-            width: default_widget_width(),
-            height: default_widget_height(),
-            opacity: default_opacity(),
-            margin: None,
             config,
+            position: None,
+            width: None,
+            height: None,
+            margin_top: None,
+            margin_right: None,
+            margin_bottom: None,
+            margin_left: None,
+            opacity: None,
+            theme_override: None,
         }
     }
 
     /// Get a unique identifier for this instance
     pub fn instance_id(&self) -> String {
         self.id.clone().unwrap_or_else(|| self.widget_type.clone())
+    }
+
+    // ============================================================================
+    // Effective value resolution methods (with panel defaults fallback)
+    // ============================================================================
+
+    /// Get effective position (widget-specific or panel default)
+    pub fn effective_position(&self, panel_default: &Position) -> Position {
+        self.position
+            .as_ref()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(*panel_default)
+    }
+
+    /// Get effective width (widget-specific or panel default)
+    pub fn effective_width(&self, panel_default: u32) -> u32 {
+        self.width.unwrap_or(panel_default)
+    }
+
+    /// Get effective height (widget-specific or panel default)
+    pub fn effective_height(&self, panel_default: u32) -> u32 {
+        self.height.unwrap_or(panel_default)
+    }
+
+    /// Get effective opacity (widget-specific or panel default)
+    pub fn effective_opacity(&self, panel_default: f32) -> f32 {
+        self.opacity.unwrap_or(panel_default).clamp(0.0, 1.0)
+    }
+
+    /// Get effective margins (widget-specific or panel default)
+    ///
+    /// Returns a Margin struct with effective values for all four sides.
+    pub fn effective_margin(&self, panel_default: &Margin) -> Margin {
+        Margin {
+            top: self.margin_top.unwrap_or(panel_default.top),
+            right: self.margin_right.unwrap_or(panel_default.right),
+            bottom: self.margin_bottom.unwrap_or(panel_default.bottom),
+            left: self.margin_left.unwrap_or(panel_default.left),
+        }
+    }
+
+    /// Get effective theme name (widget-specific override or panel default)
+    pub fn effective_theme<'a>(&'a self, panel_default: &'a str) -> &'a str {
+        self.theme_override.as_deref().unwrap_or(panel_default)
+    }
+
+    /// Check if this widget has per-widget positioning configured
+    pub fn has_custom_position(&self) -> bool {
+        self.position.is_some()
+    }
+
+    /// Check if this widget has per-widget dimensions configured
+    pub fn has_custom_dimensions(&self) -> bool {
+        self.width.is_some() || self.height.is_some()
+    }
+
+    /// Check if this widget has per-widget margins configured
+    pub fn has_custom_margins(&self) -> bool {
+        self.margin_top.is_some()
+            || self.margin_right.is_some()
+            || self.margin_bottom.is_some()
+            || self.margin_left.is_some()
+    }
+
+    /// Check if this widget has any custom appearance settings
+    pub fn has_custom_appearance(&self) -> bool {
+        self.opacity.is_some() || self.theme_override.is_some()
     }
 }
 
