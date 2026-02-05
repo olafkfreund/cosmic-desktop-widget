@@ -127,6 +127,8 @@ enum Message {
     WidgetMoveUp(usize),
     WidgetMoveDown(usize),
     WidgetExpanded(usize),
+    WidgetRemove(usize),
+    WidgetAdd(String),
 
     // Per-widget configuration
     WidgetPositionChanged(usize, String),
@@ -182,6 +184,9 @@ struct ConfigApp {
     // Available sounds
     available_sounds: Vec<String>,
 
+    // Available widget types (from registry)
+    available_widget_types: Vec<String>,
+
     // Widget configuration state
     expanded_widget: Option<usize>,
     widget_width_inputs: Vec<String>,
@@ -225,6 +230,22 @@ impl Application for ConfigApp {
             "chime".to_string(),
             "notification".to_string(),
             "beep".to_string(),
+        ];
+
+        // All available widget types (12 total)
+        let available_widget_types = vec![
+            "battery".to_string(),
+            "calendar".to_string(),
+            "clock".to_string(),
+            "countdown".to_string(),
+            "crypto".to_string(),
+            "mpris".to_string(),
+            "news".to_string(),
+            "pomodoro".to_string(),
+            "quotes".to_string(),
+            "stocks".to_string(),
+            "system_monitor".to_string(),
+            "weather".to_string(),
         ];
 
         // Initialize theme config from existing or default
@@ -285,6 +306,7 @@ impl Application for ConfigApp {
             original_config,
             available_themes,
             available_sounds,
+            available_widget_types,
             expanded_widget: None,
             widget_width_inputs,
             widget_height_inputs,
@@ -566,6 +588,32 @@ impl Application for ConfigApp {
                 } else {
                     self.expanded_widget = Some(index);
                 }
+            }
+            Message::WidgetRemove(index) => {
+                if index < self.config.widgets.len() {
+                    self.config.widgets.remove(index);
+                    // Also remove from input state vectors
+                    if index < self.widget_width_inputs.len() {
+                        self.widget_width_inputs.remove(index);
+                    }
+                    if index < self.widget_height_inputs.len() {
+                        self.widget_height_inputs.remove(index);
+                    }
+                    if index < self.widget_margin_inputs.len() {
+                        self.widget_margin_inputs.remove(index);
+                    }
+                    // Reset expanded state
+                    self.expanded_widget = None;
+                }
+            }
+            Message::WidgetAdd(widget_type) => {
+                use cosmic_desktop_widget::WidgetInstance;
+                let new_widget = WidgetInstance::new(&widget_type);
+                self.config.widgets.push(new_widget);
+                // Add input state for new widget
+                self.widget_width_inputs.push("250".to_string());
+                self.widget_height_inputs.push("90".to_string());
+                self.widget_margin_inputs.push(("10".to_string(), "20".to_string(), "0".to_string(), "0".to_string()));
             }
 
             // Per-widget configuration
@@ -1213,9 +1261,72 @@ impl ConfigApp {
     fn view_widgets(&self) -> Element<Message> {
         let spacing = theme::active().cosmic().spacing;
 
+        // Get list of widget types not yet added
+        let existing_types: Vec<&str> = self.config.widgets.iter()
+            .map(|w| w.widget_type.as_str())
+            .collect();
+        let available_to_add: Vec<&String> = self.available_widget_types.iter()
+            .filter(|t| !existing_types.contains(&t.as_str()))
+            .collect();
+
+        // Add widget section (only show if there are widgets left to add)
+        let add_widget_section = if !available_to_add.is_empty() {
+            let add_buttons: Vec<Element<'_, Message>> = available_to_add.iter().map(|widget_type| {
+                let display_name = widget_type
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().collect::<String>() + &widget_type[1..])
+                    .unwrap_or_else(|| (*widget_type).clone())
+                    .replace('_', " ");
+
+                let wt = (*widget_type).clone();
+                button::standard(format!("+ {}", display_name))
+                    .on_press(Message::WidgetAdd(wt))
+                    .into()
+            }).collect();
+
+            // Create a flex row that wraps
+            let mut button_row = row::with_capacity(add_buttons.len())
+                .spacing(spacing.space_xs);
+            for btn in add_buttons {
+                button_row = button_row.push(btn);
+            }
+
+            settings::section()
+                .title("Add Widget")
+                .add(
+                    settings::item_row(vec![
+                        text::body("Click to add a new widget type:").into(),
+                    ])
+                )
+                .add(
+                    settings::item_row(vec![
+                        container(
+                            button_row.padding([spacing.space_xxs, 0])
+                        ).width(Length::Fill).into(),
+                    ])
+                )
+        } else {
+            settings::section()
+                .title("Add Widget")
+                .add(
+                    settings::item_row(vec![
+                        text::body("All widget types have been added.").into(),
+                    ])
+                )
+        };
+
         // Build widget list using settings items
         let mut widgets_section = settings::section()
             .title("Active Widgets");
+
+        if self.config.widgets.is_empty() {
+            widgets_section = widgets_section.add(
+                settings::item_row(vec![
+                    text::body("No widgets configured. Add a widget above to get started.").into(),
+                ])
+            );
+        }
 
         for (index, widget_instance) in self.config.widgets.iter().enumerate() {
             // Capitalize widget type for display
@@ -1234,7 +1345,7 @@ impl ConfigApp {
             };
 
             // Widget header row with expand/collapse button
-            let header_row = row::with_capacity(5)
+            let header_row = row::with_capacity(7)
                 .push(
                     button::icon(icon::from_name(expand_icon))
                         .on_press(Message::WidgetExpanded(index))
@@ -1266,6 +1377,11 @@ impl ConfigApp {
                         )
                         .padding([spacing.space_xxs, spacing.space_xs])
                 )
+                .push(
+                    button::icon(icon::from_name("user-trash-symbolic"))
+                        .on_press(Message::WidgetRemove(index))
+                        .padding([spacing.space_xxs, spacing.space_xs])
+                )
                 .spacing(spacing.space_xs)
                 .align_y(Alignment::Center);
 
@@ -1293,11 +1409,17 @@ impl ConfigApp {
             )
             .add(
                 settings::item_row(vec![
+                    text::body("Use the trash icon to remove a widget.").into(),
+                ]),
+            )
+            .add(
+                settings::item_row(vec![
                     text::body("Widget order determines display order on screen.").into(),
                 ]),
             );
 
         let content = settings::view_column(vec![
+            add_widget_section.into(),
             widgets_section.into(),
             help_section.into(),
         ])

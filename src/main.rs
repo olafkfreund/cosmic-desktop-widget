@@ -895,7 +895,7 @@ fn main() -> Result<()> {
     // Add Wayland source using WaylandSource
     WaylandSource::new(conn.clone(), event_queue)
         .insert(event_loop.handle())
-        .context("Failed to insert Wayland event source into event loop")?;
+        .map_err(|e| anyhow::anyhow!("Failed to insert Wayland event source into event loop: {:?}", e))?;
 
     // Store config watcher in a shared state for the timer callback
     let config_watcher_shared = std::sync::Arc::new(std::sync::Mutex::new(config_watcher));
