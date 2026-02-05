@@ -238,11 +238,11 @@ impl CalendarWidget {
     /// Format events for display
     pub fn display_string(&self) -> String {
         if let Some(ref err) = self.error_message {
-            return format!("📅 Error: {}", err);
+            return format!("Error: {}", err);
         }
 
         if self.events.is_empty() {
-            return "📅 No upcoming events".to_string();
+            return "No upcoming events".to_string();
         }
 
         let now = Local::now();
@@ -271,7 +271,7 @@ impl CalendarWidget {
         if !today_events.is_empty() {
             let events_str: Vec<String> =
                 today_events.iter().map(|e| self.format_event(e)).collect();
-            lines.push(format!("📅 Today: {}", events_str.join(" | ")));
+            lines.push(format!("Today: {}", events_str.join(" | ")));
         }
 
         // Format tomorrow's events
@@ -280,13 +280,13 @@ impl CalendarWidget {
                 .iter()
                 .map(|e| self.format_event(e))
                 .collect();
-            lines.push(format!("📅 Tomorrow: {}", events_str.join(" | ")));
+            lines.push(format!("Tomorrow: {}", events_str.join(" | ")));
         }
 
         // Format future events (with date)
         for event in future_events {
             let date_str = event.start.format("%a %b %d").to_string();
-            lines.push(format!("📅 {}: {}", date_str, self.format_event(event)));
+            lines.push(format!("{}: {}", date_str, self.format_event(event)));
         }
 
         lines.join("\n")

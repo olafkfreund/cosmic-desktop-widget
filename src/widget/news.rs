@@ -29,9 +29,9 @@ impl Headline {
     /// Format the headline for display
     pub fn display(&self, show_source: bool) -> String {
         if show_source {
-            format!("📰 {} - {}", self.title, self.source)
+            format!("{} - {}", self.title, self.source)
         } else {
-            format!("📰 {}", self.title)
+            format!("{}", self.title)
         }
     }
 }
@@ -104,7 +104,7 @@ impl NewsWidget {
     pub fn display_string(&self) -> String {
         match self.current_headline() {
             Some(headline) => headline.display(self.show_source),
-            None => "📰 No headlines available".to_string(),
+            None => "No headlines available".to_string(),
         }
     }
 
@@ -237,8 +237,8 @@ mod tests {
     #[test]
     fn test_headline_display() {
         let headline = Headline::new("Breaking News", "BBC");
-        assert_eq!(headline.display(true), "📰 Breaking News - BBC");
-        assert_eq!(headline.display(false), "📰 Breaking News");
+        assert_eq!(headline.display(true), "Breaking News - BBC");
+        assert_eq!(headline.display(false), "Breaking News");
     }
 
     #[test]
@@ -300,7 +300,7 @@ mod tests {
     fn test_display_string() {
         let widget = NewsWidget::default();
         let display = widget.display_string();
-        assert!(display.starts_with("📰 "));
+        assert!(display.starts_with(""));
     }
 
     #[test]

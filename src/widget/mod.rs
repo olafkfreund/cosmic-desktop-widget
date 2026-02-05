@@ -425,7 +425,18 @@ impl Widget for WeatherWidget {
                     size: FontSize::Medium,
                 }
             }
-            _ => WidgetContent::Empty,
+            _ => {
+                // No data and no error - show waiting message
+                let msg = if self.api_key.is_empty() {
+                    "Weather: No API key".to_string()
+                } else {
+                    "Weather: Loading...".to_string()
+                };
+                WidgetContent::Text {
+                    text: msg,
+                    size: FontSize::Medium,
+                }
+            }
         }
     }
 

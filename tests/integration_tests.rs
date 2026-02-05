@@ -55,8 +55,8 @@ fn test_theme_loading() {
     // Light theme should have lighter background
     assert!(light.background.r > dark.background.r);
 
-    // Transparent dark should have lower opacity
-    assert!(transparent.opacity < dark.opacity);
+    // Transparent dark should have lower background alpha (opacity baked in)
+    assert!(transparent.background.a < dark.background.a);
 }
 
 // Test layout calculations
@@ -194,7 +194,7 @@ fn test_theme_config_integration() {
     config.custom_theme = Some(Theme::light());
 
     let custom_theme = config.get_theme();
-    assert_eq!(custom_theme.background.r, 255); // Light background
+    assert_eq!(custom_theme.background.r, 248); // Light background
 }
 
 // Test layout with widget positioning

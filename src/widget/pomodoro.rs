@@ -25,13 +25,13 @@ pub enum PomodoroState {
 }
 
 impl PomodoroState {
-    /// Get the emoji icon for this state
+    /// Get the text icon for this state
     fn icon(&self) -> &'static str {
         match self {
-            PomodoroState::Idle => "🍅",
-            PomodoroState::Working => "🍅",
-            PomodoroState::ShortBreak => "☕",
-            PomodoroState::LongBreak => "☕",
+            PomodoroState::Idle => ">",
+            PomodoroState::Working => ">>",
+            PomodoroState::ShortBreak => "||",
+            PomodoroState::LongBreak => "||",
         }
     }
 
@@ -435,7 +435,7 @@ mod tests {
     fn test_pomodoro_display_idle() {
         let widget = PomodoroWidget::new(25 * 60, 5 * 60, 15 * 60, 4, true, false);
         let display = widget.display_string();
-        assert!(display.contains("🍅"));
+        assert!(display.contains(">"));
         assert!(display.contains("Ready to start"));
     }
 
@@ -444,7 +444,7 @@ mod tests {
         let mut widget = PomodoroWidget::new(25 * 60, 5 * 60, 15 * 60, 4, true, false);
         widget.start();
         let display = widget.display_string();
-        assert!(display.contains("🍅"));
+        assert!(display.contains(">>"));
         assert!(display.contains("Working"));
         assert!(display.contains("(1/4)"));
     }

@@ -36,6 +36,10 @@ impl TextRenderer {
     }
 
     /// Render text with specified font weight
+    ///
+    /// The `y` parameter is treated as the baseline position.
+    /// Glyphs are placed using their individual xmin/ymin offsets from fontdue
+    /// for correct character positioning.
     pub fn render_text_weighted(
         &mut self,
         pixmap: &mut PixmapMut,
@@ -55,21 +59,30 @@ impl TextRenderer {
 
         let mut cursor_x = x;
         let font = self.font_manager.font(weight);
-        let baseline_y = (y - size * 0.8) as i32;
+
+        // Use font's actual line metrics for proper baseline
+        let baseline_y = y as i32;
 
         for c in text.chars() {
             // Get glyph from cache (no cloning - use borrowed reference)
             let glyph = self.glyph_cache.get_or_rasterize(font, c, size, weight);
 
+            // Calculate correct glyph position using fontdue metrics:
+            // - xmin: horizontal offset from cursor to glyph bitmap left edge
+            // - ymin: vertical offset from baseline to glyph bitmap bottom edge
+            // In screen coords (y-down), the glyph top is at:
+            //   baseline_y - ymin - height
+            let glyph_x = cursor_x as i32 + glyph.xmin;
+            let glyph_y = baseline_y - glyph.ymin - glyph.height as i32;
+
             // Blit the glyph bitmap to the pixmap with alpha blending
-            // Using a free function to avoid borrow conflicts with self
             blit_glyph(
                 pixmap,
                 &glyph.bitmap,
                 glyph.width,
                 glyph.height,
-                cursor_x as i32,
-                baseline_y,
+                glyph_x,
+                glyph_y,
                 color,
             );
 
@@ -167,6 +180,35 @@ impl TextRenderer {
         }
 
         width
+    }
+
+    /// Get the font ascent for a given size (distance from baseline to top of tallest glyph)
+    pub fn ascent(&self, size: f32) -> f32 {
+        let font = self.font_manager.font(FontWeight::Regular);
+        if let Some(metrics) = font.horizontal_line_metrics(size) {
+            metrics.ascent
+        } else {
+            size * 0.8 // Fallback approximation
+        }
+    }
+
+    /// Get the font descent for a given size (distance from baseline to bottom of lowest glyph, typically negative)
+    pub fn descent(&self, size: f32) -> f32 {
+        let font = self.font_manager.font(FontWeight::Regular);
+        if let Some(metrics) = font.horizontal_line_metrics(size) {
+            metrics.descent
+        } else {
+            size * -0.2 // Fallback approximation
+        }
+    }
+
+    /// Calculate the baseline Y position for vertically centering text
+    /// within a region of the given height at the given y_center
+    pub fn baseline_for_center(&self, size: f32, y_center: f32) -> f32 {
+        let ascent = self.ascent(size);
+        let descent = self.descent(size);
+        // Center the text block (ascent + |descent|) around y_center
+        y_center + (ascent + descent) / 2.0
     }
 }
 

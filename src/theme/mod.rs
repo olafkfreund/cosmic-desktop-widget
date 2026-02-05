@@ -1,4 +1,10 @@
 //! Theming system for widget appearance
+//!
+//! Design tokens aligned with COSMIC Desktop guidelines:
+//! - 8px spacing grid
+//! - Semantic color palette
+//! - Proper contrast ratios (WCAG AA minimum)
+//! - Glassmorphic background patterns
 
 use serde::{Deserialize, Serialize};
 
@@ -43,13 +49,13 @@ pub struct Theme {
     /// Border color
     pub border: Color,
 
-    /// Primary text color
+    /// Primary text color (for data values - WCAG AAA: 7:1 contrast)
     pub text_primary: Color,
 
-    /// Secondary text color
+    /// Secondary text color (for labels - WCAG AA: 4.5:1 contrast)
     pub text_secondary: Color,
 
-    /// Accent color (for decorations)
+    /// Accent color (for decorations, progress bars)
     pub accent: Color,
 
     /// Background transparency (0.0 = transparent, 1.0 = opaque)
@@ -64,81 +70,123 @@ pub struct Theme {
 
     /// Corner radius for rounded corners
     pub corner_radius: f32,
+
+    /// Text shadow color (for readability on any wallpaper)
+    #[serde(default = "default_text_shadow")]
+    pub text_shadow: Color,
+
+    /// Text shadow enabled
+    #[serde(default = "default_shadow_enabled")]
+    pub text_shadow_enabled: bool,
+}
+
+fn default_text_shadow() -> Color {
+    Color::new(0, 0, 0, 153) // rgba(0,0,0,0.6)
+}
+
+fn default_shadow_enabled() -> bool {
+    true
 }
 
 impl Theme {
-    /// COSMIC-inspired dark theme
+    /// COSMIC-inspired dark theme - primary recommended theme
+    ///
+    /// Based on COSMIC Desktop design guidelines:
+    /// - Dark background with 85% effective opacity for guaranteed readability
+    /// - Subtle border (10% white) for definition against wallpaper
+    /// - COSMIC blue accent (#3478F6)
+    /// - 12px corner radius (COSMIC standard for containers)
     pub fn cosmic_dark() -> Self {
         Self {
-            background: Color::new(30, 30, 30, 230),
-            border: Color::new(100, 100, 100, 255),
-            text_primary: Color::new(255, 255, 255, 255),
-            text_secondary: Color::new(180, 180, 180, 255),
+            // Dark base with high alpha for readability on any wallpaper
+            background: Color::new(20, 20, 24, 217), // ~85% opacity
+            // Subtle light border for definition
+            border: Color::new(255, 255, 255, 25), // 10% white
+            // High contrast text - 95% white for data values
+            text_primary: Color::new(255, 255, 255, 242),
+            // Secondary text at 70% white for labels
+            text_secondary: Color::new(255, 255, 255, 178),
             accent: Color::new(52, 120, 246, 255), // COSMIC blue
-            opacity: 0.9,
+            opacity: 1.0,
             blur_enabled: false,
-            border_width: 2.0,
-            corner_radius: 16.0, // More visible rounded corners
+            border_width: 1.0,
+            corner_radius: 12.0,
+            text_shadow: Color::new(0, 0, 0, 128),
+            text_shadow_enabled: true,
         }
     }
 
     /// Light theme
     pub fn light() -> Self {
         Self {
-            background: Color::new(255, 255, 255, 240),
-            border: Color::new(200, 200, 200, 255),
-            text_primary: Color::new(30, 30, 30, 255),
-            text_secondary: Color::new(80, 80, 80, 255),
+            background: Color::new(248, 248, 250, 217), // ~85% opacity
+            border: Color::new(0, 0, 0, 20), // 8% black
+            text_primary: Color::new(0, 0, 0, 230), // 90% black
+            text_secondary: Color::new(0, 0, 0, 166), // 65% black
             accent: Color::new(52, 120, 246, 255),
-            opacity: 0.95,
-            blur_enabled: false,
-            border_width: 1.0,
-            corner_radius: 8.0,
-        }
-    }
-
-    /// Transparent dark theme (very low opacity, light text)
-    pub fn transparent_dark() -> Self {
-        Self {
-            background: Color::new(0, 0, 0, 128),
-            border: Color::new(255, 255, 255, 50),
-            text_primary: Color::new(255, 255, 255, 255),
-            text_secondary: Color::new(200, 200, 200, 200),
-            accent: Color::new(52, 120, 246, 200),
-            opacity: 0.5,
-            blur_enabled: false,
-            border_width: 1.0,
-            corner_radius: 16.0, // More visible rounded corners
-        }
-    }
-
-    /// Transparent light theme (very low opacity, dark text)
-    pub fn transparent_light() -> Self {
-        Self {
-            background: Color::new(255, 255, 255, 128),
-            border: Color::new(30, 30, 30, 50),
-            text_primary: Color::new(0, 0, 0, 255),
-            text_secondary: Color::new(60, 60, 60, 220),
-            accent: Color::new(52, 120, 246, 200),
-            opacity: 0.5,
+            opacity: 1.0,
             blur_enabled: false,
             border_width: 1.0,
             corner_radius: 12.0,
+            text_shadow: Color::new(255, 255, 255, 100),
+            text_shadow_enabled: false,
         }
     }
 
-    /// Glass theme (moderate opacity with blur hint)
+    /// Transparent dark theme (glassmorphic without blur)
+    pub fn transparent_dark() -> Self {
+        Self {
+            // 75% opacity dark background
+            background: Color::new(20, 20, 24, 191),
+            border: Color::new(255, 255, 255, 25),
+            text_primary: Color::new(255, 255, 255, 242),
+            text_secondary: Color::new(255, 255, 255, 178),
+            accent: Color::new(52, 120, 246, 230),
+            opacity: 1.0,
+            blur_enabled: false,
+            border_width: 1.0,
+            corner_radius: 12.0,
+            text_shadow: Color::new(0, 0, 0, 153),
+            text_shadow_enabled: true,
+        }
+    }
+
+    /// Transparent light theme (glassmorphic without blur)
+    pub fn transparent_light() -> Self {
+        Self {
+            background: Color::new(248, 248, 250, 191), // 75% opacity
+            border: Color::new(0, 0, 0, 20),
+            text_primary: Color::new(0, 0, 0, 230),
+            text_secondary: Color::new(0, 0, 0, 166),
+            accent: Color::new(52, 120, 246, 230),
+            opacity: 1.0,
+            blur_enabled: false,
+            border_width: 1.0,
+            corner_radius: 12.0,
+            text_shadow: Color::new(255, 255, 255, 100),
+            text_shadow_enabled: false,
+        }
+    }
+
+    /// Glass theme (frosted glass with blur hint)
+    ///
+    /// Uses lower background opacity because compositor blur
+    /// provides additional contrast. Falls back gracefully if
+    /// blur is not supported.
     pub fn glass() -> Self {
         Self {
-            background: Color::new(40, 40, 40, 180),
-            border: Color::new(120, 120, 120, 120),
-            text_primary: Color::new(255, 255, 255, 255),
-            text_secondary: Color::new(200, 200, 200, 220),
+            // Lower opacity because blur helps with contrast
+            background: Color::new(20, 20, 24, 166), // ~65% opacity
+            border: Color::new(255, 255, 255, 38), // 15% white - more visible with blur
+            text_primary: Color::new(255, 255, 255, 242),
+            text_secondary: Color::new(255, 255, 255, 178),
             accent: Color::new(52, 120, 246, 230),
-            opacity: 0.7,
+            opacity: 1.0,
             blur_enabled: true,
-            border_width: 1.5,
+            border_width: 1.0,
             corner_radius: 16.0,
+            text_shadow: Color::new(0, 0, 0, 153),
+            text_shadow_enabled: true,
         }
     }
 
@@ -198,9 +246,10 @@ mod tests {
 
     #[test]
     fn test_theme_opacity() {
-        let theme = Theme::transparent_dark();
+        let theme = Theme::glass();
         let bg = theme.background_with_opacity();
-        assert!(bg.a < theme.background.a);
+        // Glass theme has opacity 1.0 so bg.a should equal background.a
+        assert_eq!(bg.a, theme.background.a);
     }
 
     #[test]
@@ -210,20 +259,17 @@ mod tests {
         assert!(!dark.blur_enabled);
 
         let light = Theme::from_name("light");
-        assert_eq!(light.background.r, 255);
+        assert_eq!(light.background.r, 248);
         assert!(!light.blur_enabled);
 
         let transparent_dark = Theme::from_name("transparent_dark");
-        assert_eq!(transparent_dark.opacity, 0.5);
         assert!(!transparent_dark.blur_enabled);
 
         let transparent_light = Theme::from_name("transparent_light");
-        assert_eq!(transparent_light.opacity, 0.5);
         assert_eq!(transparent_light.text_primary.r, 0); // Dark text
         assert!(!transparent_light.blur_enabled);
 
         let glass = Theme::from_name("glass");
-        assert_eq!(glass.opacity, 0.7);
         assert!(glass.blur_enabled);
 
         // Unknown theme defaults to cosmic_dark
@@ -236,5 +282,12 @@ mod tests {
         let color = Color::new(255, 128, 64, 200);
         let array = color.to_array();
         assert_eq!(array, [255, 128, 64, 200]);
+    }
+
+    #[test]
+    fn test_text_shadow_defaults() {
+        let theme = Theme::cosmic_dark();
+        assert!(theme.text_shadow_enabled);
+        assert!(theme.text_shadow.a > 0);
     }
 }

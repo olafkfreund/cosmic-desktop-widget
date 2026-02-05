@@ -69,14 +69,14 @@ impl BatteryStatus {
         }
     }
 
-    /// Get emoji icon for status
+    /// Get text label for status
     fn icon(&self) -> &'static str {
         match self {
-            Self::Charging => "🔌",
-            Self::Discharging => "🔋",
-            Self::Full => "🔌",
-            Self::NotCharging => "🔌",
-            Self::Unknown => "🔋",
+            Self::Charging => "CHG",
+            Self::Discharging => "BAT",
+            Self::Full => "FULL",
+            Self::NotCharging => "BAT",
+            Self::Unknown => "BAT",
         }
     }
 }
@@ -481,9 +481,9 @@ mod tests {
 
     #[test]
     fn test_battery_status_icon() {
-        assert_eq!(BatteryStatus::Charging.icon(), "🔌");
-        assert_eq!(BatteryStatus::Discharging.icon(), "🔋");
-        assert_eq!(BatteryStatus::Full.icon(), "🔌");
+        assert_eq!(BatteryStatus::Charging.icon(), "CHG");
+        assert_eq!(BatteryStatus::Discharging.icon(), "BAT");
+        assert_eq!(BatteryStatus::Full.icon(), "FULL");
     }
 
     #[test]

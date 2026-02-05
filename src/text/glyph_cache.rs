@@ -24,6 +24,10 @@ pub struct RasterizedGlyph {
     pub width: usize,
     pub height: usize,
     pub advance_width: f32,
+    /// Horizontal offset from cursor to left edge of glyph bitmap
+    pub xmin: i32,
+    /// Vertical offset from baseline to bottom edge of glyph bitmap
+    pub ymin: i32,
 }
 
 impl GlyphCache {
@@ -52,7 +56,7 @@ impl GlyphCache {
             self.metrics.record_hit();
         } else {
             self.metrics.record_miss();
-            // Insert new glyph
+            // Insert new glyph with full positioning metrics
             let (metrics, bitmap) = font.rasterize(c, size);
             self.cache.insert(
                 key.clone(),
@@ -61,6 +65,8 @@ impl GlyphCache {
                     width: metrics.width,
                     height: metrics.height,
                     advance_width: metrics.advance_width,
+                    xmin: metrics.xmin,
+                    ymin: metrics.ymin,
                 },
             );
         }
@@ -178,6 +184,8 @@ mod tests {
                 width: 10,
                 height: 10,
                 advance_width: 10.0,
+                xmin: 0,
+                ymin: 0,
             },
         );
 

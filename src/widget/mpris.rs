@@ -39,9 +39,9 @@ impl Default for PlaybackStatus {
 impl PlaybackStatus {
     fn icon(&self) -> &'static str {
         match self {
-            PlaybackStatus::Playing => "▶️",
-            PlaybackStatus::Paused => "⏸️",
-            PlaybackStatus::Stopped => "⏹️",
+            PlaybackStatus::Playing => ">",
+            PlaybackStatus::Paused => "||",
+            PlaybackStatus::Stopped => "[]",
         }
     }
 
@@ -489,9 +489,9 @@ mod tests {
 
     #[test]
     fn test_playback_status_icon() {
-        assert_eq!(PlaybackStatus::Playing.icon(), "▶️");
-        assert_eq!(PlaybackStatus::Paused.icon(), "⏸️");
-        assert_eq!(PlaybackStatus::Stopped.icon(), "⏹️");
+        assert_eq!(PlaybackStatus::Playing.icon(), ">");
+        assert_eq!(PlaybackStatus::Paused.icon(), "||");
+        assert_eq!(PlaybackStatus::Stopped.icon(), "[]");
     }
 
     #[test]

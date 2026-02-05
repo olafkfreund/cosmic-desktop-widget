@@ -246,12 +246,11 @@ impl Renderer {
             return;
         };
 
-        // Clear background with theme color
+        // Clear with fully transparent so rounded corners show through to wallpaper
         let bg = self.theme.background_with_opacity();
-        let bg_color = bg.to_tiny_skia();
-        pixmap.fill(bg_color);
+        pixmap.fill(tiny_skia::Color::from_rgba8(0, 0, 0, 0));
 
-        // Draw rounded rectangle background with corner radius
+        // Draw rounded rectangle background (only this shape gets the bg color)
         let corner_radius = self.theme.corner_radius;
         self.draw_rounded_rect(&mut pixmap, width, height, corner_radius, &bg);
 
@@ -300,13 +299,11 @@ impl Renderer {
             // Center horizontally
             let x = (width_f - text_width) / 2.0;
 
-            // Center vertically (accounting for both widgets if present)
+            // Center vertically using proper font metrics
             let y = if has_weather {
-                // Clock in upper portion when weather is shown
-                height_f * 0.42 + clock_font_size * 0.35
+                self.text_renderer.baseline_for_center(clock_font_size, height_f * 0.38)
             } else {
-                // Perfectly centered when alone
-                height_f / 2.0 + clock_font_size * 0.35
+                self.text_renderer.baseline_for_center(clock_font_size, height_f / 2.0)
             };
 
             self.render_text(&mut pixmap, time_str, x, y, clock_font_size);
@@ -323,9 +320,9 @@ impl Renderer {
 
             // Position below clock or centered
             let y = if has_clock {
-                height_f * 0.82 + weather_font_size * 0.35
+                self.text_renderer.baseline_for_center(weather_font_size, height_f * 0.78)
             } else {
-                height_f / 2.0 + weather_font_size * 0.35
+                self.text_renderer.baseline_for_center(weather_font_size, height_f / 2.0)
             };
 
             self.render_text(&mut pixmap, weather_str, x, y, weather_font_size);
@@ -533,7 +530,15 @@ impl Renderer {
     }
 
     fn render_text(&mut self, pixmap: &mut PixmapMut, text: &str, x: f32, y: f32, size: f32) {
-        // Render text using fontdue with theme color
+        // Render text shadow first (offset by 1px down-right) for readability on any wallpaper
+        if self.theme.text_shadow_enabled {
+            let shadow_color = self.theme.text_shadow.to_array();
+            let shadow_offset = (size * 0.06).max(1.0); // Scale shadow with font size
+            self.text_renderer
+                .render_text(pixmap, text, x + shadow_offset, y + shadow_offset, size, shadow_color);
+        }
+
+        // Render main text using fontdue with theme color
         let text_color = self.theme.text_primary.to_array();
         self.text_renderer
             .render_text(pixmap, text, x, y, size, text_color);
@@ -549,6 +554,15 @@ impl Renderer {
         size: f32,
         weight: FontWeight,
     ) {
+        // Text shadow for readability
+        if self.theme.text_shadow_enabled {
+            let shadow_color = self.theme.text_shadow.to_array();
+            let shadow_offset = (size * 0.06).max(1.0);
+            self.text_renderer.render_text_weighted(
+                pixmap, text, x + shadow_offset, y + shadow_offset, size, shadow_color, weight,
+            );
+        }
+
         let text_color = self.theme.text_primary.to_array();
         self.text_renderer
             .render_text_weighted(pixmap, text, x, y, size, text_color, weight);
@@ -563,9 +577,32 @@ impl Renderer {
         y: f32,
         size: f32,
     ) {
-        let mut cursor_x = x;
+        let shadow_enabled = self.theme.text_shadow_enabled;
+        let shadow_color = self.theme.text_shadow.to_array();
+        let shadow_offset = (size * 0.06).max(1.0);
         let default_color = self.theme.text_primary.to_array();
 
+        // Shadow pass
+        if shadow_enabled {
+            let mut cursor_x = x + shadow_offset;
+            for segment in segments {
+                self.text_renderer.render_text_weighted(
+                    pixmap,
+                    &segment.text,
+                    cursor_x,
+                    y + shadow_offset,
+                    size,
+                    shadow_color,
+                    segment.weight,
+                );
+                cursor_x +=
+                    self.text_renderer
+                        .measure_text_weighted(&segment.text, size, segment.weight);
+            }
+        }
+
+        // Main text pass
+        let mut cursor_x = x;
         for segment in segments {
             let color = segment.color.unwrap_or(default_color);
             self.text_renderer.render_text_weighted(
@@ -628,13 +665,25 @@ impl Renderer {
         let total_width = x_end - x_start;
         let progress = bar.value.clamp(0.0, 1.0);
 
-        // Draw label on the left
+        // Draw label on the left using proper baseline
         let secondary_color = self.theme.text_secondary.to_array();
+        let label_baseline = self.text_renderer.baseline_for_center(label_size, y + bar_height / 2.0);
+
+        // Shadow for label
+        if self.theme.text_shadow_enabled {
+            let shadow_color = self.theme.text_shadow.to_array();
+            let so = (label_size * 0.06).max(1.0);
+            self.text_renderer.render_text_weighted(
+                pixmap, &bar.label, x_start + so, label_baseline + so, label_size,
+                shadow_color, FontWeight::Regular,
+            );
+        }
+
         self.text_renderer.render_text_weighted(
             pixmap,
             &bar.label,
             x_start,
-            y + label_size * 0.3,
+            label_baseline,
             label_size,
             secondary_color,
             FontWeight::Regular,
@@ -687,11 +736,22 @@ impl Renderer {
         // Draw percentage on the right
         let percent_text = format!("{:.0}%", progress * 100.0);
         let percent_x = bar_x_start + bar_width + 8.0;
+
+        // Shadow for percentage
+        if self.theme.text_shadow_enabled {
+            let shadow_color = self.theme.text_shadow.to_array();
+            let so = (label_size * 0.06).max(1.0);
+            self.text_renderer.render_text_weighted(
+                pixmap, &percent_text, percent_x + so, label_baseline + so, label_size,
+                shadow_color, FontWeight::Bold,
+            );
+        }
+
         self.text_renderer.render_text_weighted(
             pixmap,
             &percent_text,
             percent_x,
-            y + label_size * 0.3,
+            label_baseline,
             label_size,
             secondary_color,
             FontWeight::Bold,
@@ -829,12 +889,11 @@ impl Renderer {
             return;
         };
 
-        // Clear background with theme color
+        // Clear with fully transparent so rounded corners show through to wallpaper
         let bg = self.theme.background_with_opacity();
-        let bg_color = bg.to_tiny_skia();
-        pixmap.fill(bg_color);
+        pixmap.fill(tiny_skia::Color::from_rgba8(0, 0, 0, 0));
 
-        // Draw rounded rectangle background
+        // Draw rounded rectangle background (only this shape gets the bg color)
         let corner_radius = self.theme.corner_radius;
         self.draw_rounded_rect(&mut pixmap, width, height, corner_radius, &bg);
         self.draw_rounded_border(&mut pixmap, width, height, corner_radius);
@@ -886,12 +945,13 @@ impl Renderer {
             };
 
             // Render based on content type
+            let ascent = self.text_renderer.ascent(font_size);
             match content {
                 WidgetContent::Text { text, .. } => {
                     // Center text horizontally
                     let text_width = self.text_renderer.measure_text(&text, font_size);
                     let x = (width as f32 - text_width) / 2.0;
-                    self.render_text(&mut pixmap, &text, x, y_offset + font_size, font_size);
+                    self.render_text(&mut pixmap, &text, x, y_offset + ascent, font_size);
                     y_offset += font_size + spacing;
                 }
                 WidgetContent::MultiLine { lines } => {
@@ -902,23 +962,24 @@ impl Renderer {
                             FontSize::Small => 16.0,
                             FontSize::Custom(s) => s,
                         };
+                        let line_ascent = self.text_renderer.ascent(fs);
                         let text_width = self.text_renderer.measure_text(&text, fs);
                         let x = (width as f32 - text_width) / 2.0;
-                        self.render_text(&mut pixmap, &text, x, y_offset + fs, fs);
-                        y_offset += fs + spacing * 0.5;
+                        self.render_text(&mut pixmap, &text, x, y_offset + line_ascent, fs);
+                        y_offset += fs * 1.3 + spacing * 0.5;
                     }
                     y_offset += spacing * 0.5;
                 }
                 WidgetContent::IconText { icon, text, .. } => {
                     let x = padding;
-                    self.render_icon_text(&mut pixmap, &icon, &text, x, y_offset + font_size, font_size);
+                    self.render_icon_text(&mut pixmap, &icon, &text, x, y_offset + ascent, font_size);
                     y_offset += font_size + spacing;
                 }
                 WidgetContent::StyledText { segments, .. } => {
                     // Center styled text horizontally
                     let total_width = self.measure_styled_text(&segments, font_size);
                     let x = (width as f32 - total_width) / 2.0;
-                    self.render_styled_text(&mut pixmap, &segments, x, y_offset + font_size, font_size);
+                    self.render_styled_text(&mut pixmap, &segments, x, y_offset + ascent, font_size);
                     y_offset += font_size + spacing;
                 }
                 WidgetContent::Progress { value, label } => {
@@ -928,7 +989,8 @@ impl Renderer {
                     if let Some(label_text) = label {
                         let label_width = self.text_renderer.measure_text(&label_text, 14.0);
                         let x = (width as f32 - label_width) / 2.0;
-                        self.render_text(&mut pixmap, &label_text, x, bar_y + 20.0, 14.0);
+                        let label_baseline = self.text_renderer.baseline_for_center(14.0, bar_y + 20.0);
+                        self.render_text(&mut pixmap, &label_text, x, label_baseline, 14.0);
                     }
                     y_offset += 30.0 + spacing;
                 }
@@ -970,13 +1032,12 @@ impl Renderer {
             return;
         };
 
-        // Clear background with theme color and apply widget-specific opacity
+        // Clear with fully transparent so rounded corners show through to wallpaper
         let mut bg = self.theme.background.clone();
-        bg.a = (255.0 * opacity) as u8;
-        let bg_color = bg.to_tiny_skia();
-        pixmap.fill(bg_color);
+        bg.a = (bg.a as f32 * opacity) as u8;
+        pixmap.fill(tiny_skia::Color::from_rgba8(0, 0, 0, 0));
 
-        // Draw rounded rectangle background
+        // Draw rounded rectangle background (only this shape gets the bg color)
         let corner_radius = self.theme.corner_radius;
         self.draw_rounded_rect(&mut pixmap, width, height, corner_radius, &bg);
 
@@ -1007,7 +1068,7 @@ impl Renderer {
             pixmap.stroke_path(&path, &border_paint, &stroke, Transform::identity(), None);
         }
 
-        let padding = 10.0; // Fixed padding for individual widgets
+        let padding = 16.0; // Internal padding for individual widgets
         let content = widget.content();
 
         // Calculate font size based on widget preference
@@ -1049,30 +1110,43 @@ impl Renderer {
 
         // Render widget content centered
         let y_center = height as f32 / 2.0;
+        let available_width = width as f32 - padding * 2.0;
 
         match content {
             WidgetContent::Text { text, .. } => {
-                // Center text horizontally and vertically
-                let text_width = self.text_renderer.measure_text(&text, font_size);
+                // Auto-scale font size if text is wider than available space
+                let mut fs = font_size;
+                let mut text_width = self.text_renderer.measure_text(&text, fs);
+                if text_width > available_width && available_width > 0.0 {
+                    fs = (fs * available_width / text_width).max(10.0);
+                    text_width = self.text_renderer.measure_text(&text, fs);
+                }
                 let x = ((width as f32) - text_width) / 2.0;
-                let y = y_center + font_size * 0.35;
-                self.render_text(&mut pixmap, &text, x, y, font_size);
+                let y = self.text_renderer.baseline_for_center(fs, y_center);
+                self.render_text(&mut pixmap, &text, x, y, fs);
             }
             WidgetContent::MultiLine { lines } => {
-                let total_height: f32 = lines.len() as f32 * font_size * 1.2;
-                let mut y = y_center - total_height / 2.0 + font_size;
+                let line_count = lines.len() as f32;
+                let line_height = font_size * 1.4;
+                let total_height = line_count * line_height;
+                let ascent = self.text_renderer.ascent(font_size);
+                let mut y = y_center - total_height / 2.0 + ascent;
 
                 for (text, size) in lines {
-                    let fs = match size {
+                    let mut fs = match size {
                         FontSize::Large => (height as f32 * 0.4).min(36.0),
                         FontSize::Medium => (height as f32 * 0.3).min(22.0),
                         FontSize::Small => (height as f32 * 0.2).min(14.0),
                         FontSize::Custom(s) => s,
                     };
-                    let text_width = self.text_renderer.measure_text(&text, fs);
+                    let mut text_width = self.text_renderer.measure_text(&text, fs);
+                    if text_width > available_width && available_width > 0.0 {
+                        fs = (fs * available_width / text_width).max(10.0);
+                        text_width = self.text_renderer.measure_text(&text, fs);
+                    }
                     let x = ((width as f32) - text_width) / 2.0;
                     self.render_text(&mut pixmap, &text, x, y, fs);
-                    y += fs * 1.2;
+                    y += line_height;
                 }
             }
             WidgetContent::IconText { icon, text, .. } => {
@@ -1081,16 +1155,21 @@ impl Renderer {
                 let icon_spacing = font_size * 0.3;
                 let total_width = icon_size as f32 + icon_spacing + text_width;
                 let x_start = ((width as f32) - total_width) / 2.0;
-                let y = y_center + font_size * 0.35;
+                let y = self.text_renderer.baseline_for_center(font_size, y_center);
 
-                self.render_icon_text(&mut pixmap, &icon, &text, x_start, y, font_size);
+                self.render_icon_text(&mut pixmap, &icon, &text, x_start.max(padding), y, font_size);
             }
             WidgetContent::StyledText { segments, .. } => {
-                // Center styled text horizontally and vertically
-                let total_width = self.measure_styled_text(&segments, font_size);
+                // Auto-scale styled text if wider than available space
+                let mut fs = font_size;
+                let mut total_width = self.measure_styled_text(&segments, fs);
+                if total_width > available_width && available_width > 0.0 {
+                    fs = (fs * available_width / total_width).max(10.0);
+                    total_width = self.measure_styled_text(&segments, fs);
+                }
                 let x = ((width as f32) - total_width) / 2.0;
-                let y = y_center + font_size * 0.35;
-                self.render_styled_text(&mut pixmap, &segments, x, y, font_size);
+                let y = self.text_renderer.baseline_for_center(fs, y_center);
+                self.render_styled_text(&mut pixmap, &segments, x, y, fs);
             }
             WidgetContent::Progress { value, label } => {
                 let bar_y = y_center - 4.0;
@@ -1104,7 +1183,8 @@ impl Renderer {
                 if let Some(label_text) = label {
                     let label_width = self.text_renderer.measure_text(&label_text, 14.0);
                     let x = ((width as f32) - label_width) / 2.0;
-                    self.render_text(&mut pixmap, &label_text, x, bar_y + 24.0, 14.0);
+                    let label_y = self.text_renderer.baseline_for_center(14.0, bar_y + 20.0);
+                    self.render_text(&mut pixmap, &label_text, x, label_y, 14.0);
                 }
             }
             WidgetContent::MultiProgress { bars } => {

@@ -58,8 +58,9 @@ impl FontManager {
         // Try to use fc-match to find suitable fonts
         use std::process::Command;
 
-        // Preferred fonts in order - modern, clean, readable
+        // Preferred fonts in order - COSMIC Desktop and modern sans-serif
         let preferred_fonts = [
+            "Open Sans",      // COSMIC Desktop default font
             "Fira Sans",      // Modern, clean, excellent readability
             "Inter",          // Very popular, highly readable
             "Roboto",         // Google's modern sans-serif
