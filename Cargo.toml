@@ -74,6 +74,17 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 resvg = "0.37"
 usvg = "0.37"
 
+# Configuration file watching
+notify = { version = "6.1", default-features = false, features = ["macos_kqueue"] }
+
+# libcosmic for configuration GUI
+libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false, features = ["tokio", "winit", "wgpu"], optional = true }
+once_cell = { version = "1", optional = true }
+
+[features]
+default = []
+gui = ["libcosmic", "once_cell"]
+
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3"
@@ -85,6 +96,11 @@ path = "src/lib.rs"
 [[bin]]
 name = "cosmic-desktop-widget"
 path = "src/main.rs"
+
+[[bin]]
+name = "cosmic-desktop-widget-config"
+path = "src/bin/config_gui.rs"
+required-features = ["gui"]
 
 [profile.release]
 opt-level = 3

@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::icons::IconCache;
 use crate::text::TextRenderer;
 use crate::theme::Theme;
+use crate::widget::traits::Widget;
 use crate::widget::{ClockWidget, WeatherWidget};
 use chrono::Timelike;
 use tiny_skia::*;
@@ -556,6 +557,175 @@ impl Renderer {
                 self.render_text(pixmap, text, x, y, text_size);
             }
         }
+    }
+
+    /// Draw a horizontal progress bar
+    /// x_start: left edge of bar
+    /// x_end: right edge of bar
+    /// y: vertical position
+    /// value: progress from 0.0 to 1.0
+    fn draw_progress_bar(
+        &self,
+        pixmap: &mut PixmapMut,
+        x_start: f32,
+        x_end: f32,
+        y: f32,
+        value: f32,
+    ) {
+        let bar_height = 8.0;
+        let total_width = x_end - x_start;
+        let progress = value.clamp(0.0, 1.0);
+
+        // Draw background track
+        let mut bg_paint = Paint::default();
+        let accent = self.theme.accent.to_array();
+        bg_paint.set_color_rgba8(accent[0], accent[1], accent[2], 40);
+        bg_paint.anti_alias = true;
+
+        if let Some(bg_rect) = Rect::from_xywh(x_start, y, total_width, bar_height) {
+            let bg_path = PathBuilder::from_rect(bg_rect);
+            pixmap.fill_path(
+                &bg_path,
+                &bg_paint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+        }
+
+        // Draw progress fill
+        if progress > 0.0 {
+            let mut fg_paint = Paint::default();
+            fg_paint.set_color_rgba8(accent[0], accent[1], accent[2], accent[3]);
+            fg_paint.anti_alias = true;
+
+            let fill_width = total_width * progress;
+            if let Some(fg_rect) = Rect::from_xywh(x_start, y, fill_width, bar_height) {
+                let fg_path = PathBuilder::from_rect(fg_rect);
+                pixmap.fill_path(
+                    &fg_path,
+                    &fg_paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+    }
+
+    /// Render dynamic widgets from registry
+    pub fn render_dynamic_widgets(
+        &mut self,
+        canvas: &mut [u8],
+        width: u32,
+        height: u32,
+        widgets: &[Box<dyn Widget>],
+        config: &Config,
+    ) {
+        use crate::widget::traits::{FontSize, WidgetContent};
+
+        // Create pixmap from canvas
+        let Some(mut pixmap) = PixmapMut::from_bytes(canvas, width, height) else {
+            tracing::error!("Failed to create pixmap for dynamic widgets");
+            return;
+        };
+
+        // Clear background with theme color
+        let bg = self.theme.background_with_opacity();
+        let bg_color = bg.to_tiny_skia();
+        pixmap.fill(bg_color);
+
+        // Draw rounded rectangle background
+        let corner_radius = self.theme.corner_radius;
+        self.draw_rounded_rect(&mut pixmap, width, height, corner_radius, &bg);
+        self.draw_rounded_border(&mut pixmap, width, height, corner_radius);
+
+        let padding = config.padding();
+        let spacing = config.panel.spacing;
+        let mut y_offset = padding;
+
+        // Render each widget
+        for widget in widgets {
+            let info = widget.info();
+            let content = widget.content();
+
+            // Calculate font size based on widget preference
+            let font_size = match &content {
+                WidgetContent::Text { size, .. } => match size {
+                    FontSize::Large => 48.0,
+                    FontSize::Medium => 24.0,
+                    FontSize::Small => 16.0,
+                    FontSize::Custom(s) => *s,
+                },
+                WidgetContent::MultiLine { lines } => {
+                    if let Some((_, size)) = lines.first() {
+                        match size {
+                            FontSize::Large => 48.0,
+                            FontSize::Medium => 24.0,
+                            FontSize::Small => 16.0,
+                            FontSize::Custom(s) => *s,
+                        }
+                    } else {
+                        16.0
+                    }
+                }
+                WidgetContent::IconText { size, .. } => match size {
+                    FontSize::Large => 48.0,
+                    FontSize::Medium => 24.0,
+                    FontSize::Small => 16.0,
+                    FontSize::Custom(s) => *s,
+                },
+                WidgetContent::Progress { .. } => 16.0,
+                WidgetContent::Empty => continue,
+            };
+
+            // Render based on content type
+            match content {
+                WidgetContent::Text { text, .. } => {
+                    // Center text horizontally
+                    let text_width = self.text_renderer.measure_text(&text, font_size);
+                    let x = (width as f32 - text_width) / 2.0;
+                    self.render_text(&mut pixmap, &text, x, y_offset + font_size, font_size);
+                    y_offset += font_size + spacing;
+                }
+                WidgetContent::MultiLine { lines } => {
+                    for (text, size) in lines {
+                        let fs = match size {
+                            FontSize::Large => 48.0,
+                            FontSize::Medium => 24.0,
+                            FontSize::Small => 16.0,
+                            FontSize::Custom(s) => s,
+                        };
+                        let text_width = self.text_renderer.measure_text(&text, fs);
+                        let x = (width as f32 - text_width) / 2.0;
+                        self.render_text(&mut pixmap, &text, x, y_offset + fs, fs);
+                        y_offset += fs + spacing * 0.5;
+                    }
+                    y_offset += spacing * 0.5;
+                }
+                WidgetContent::IconText { icon, text, .. } => {
+                    let x = padding;
+                    self.render_icon_text(&mut pixmap, &icon, &text, x, y_offset + font_size, font_size);
+                    y_offset += font_size + spacing;
+                }
+                WidgetContent::Progress { value, label } => {
+                    // Render progress bar
+                    let bar_y = y_offset + 10.0;
+                    self.draw_progress_bar(&mut pixmap, padding, width as f32 - padding, bar_y, value);
+                    if let Some(label_text) = label {
+                        let label_width = self.text_renderer.measure_text(&label_text, 14.0);
+                        let x = (width as f32 - label_width) / 2.0;
+                        self.render_text(&mut pixmap, &label_text, x, bar_y + 20.0, 14.0);
+                    }
+                    y_offset += 30.0 + spacing;
+                }
+                WidgetContent::Empty => {}
+            }
+
+            tracing::trace!(widget = info.id, y_offset = y_offset, "Rendered widget");
+        }
+
+        self.first_render = false;
     }
 }
 

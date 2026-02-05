@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=COSMIC Desktop Widget Settings
+GenericName=Desktop Widget Configuration
+Comment=Configure COSMIC Desktop Widget appearance and widgets
+Exec=cosmic-desktop-widget-config
+Icon=preferences-desktop
+Terminal=false
+Type=Application
+Categories=Settings;DesktopSettings;COSMIC;
+Keywords=widget;desktop;configure;settings;panel;
+StartupNotify=true
+X-COSMIC-ConfigPanel=true

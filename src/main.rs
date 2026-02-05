@@ -33,6 +33,7 @@ use wayland_client::{
 use cosmic_desktop_widget::{
     button_code_to_mouse_button,
     config::Config,
+    config_watcher::ConfigWatcher,
     execute_action, hit_test_widgets,
     metrics::{Timer, WidgetMetrics, TARGET_RENDER_TIME_MS},
     panel::{MarginAdjustments, PanelDetection},
@@ -40,7 +41,7 @@ use cosmic_desktop_widget::{
     scroll_to_direction,
     update::UpdateScheduler,
     wayland,
-    widget::{ClockWidget, MouseButton, WeatherWidget, Widget, WidgetRegistry},
+    widget::{ClockWidget, WeatherWidget, Widget, WidgetRegistry},
     InputState,
 };
 
@@ -571,6 +572,163 @@ impl DesktopWidget {
         );
     }
 
+    /// Reload configuration and update widget state
+    ///
+    /// This is called when the config file changes. It:
+    /// 1. Loads the new configuration
+    /// 2. Recreates widgets based on new config
+    /// 3. Updates renderer theme
+    /// 4. Resizes and repositions the surface if needed
+    fn reload_config(&mut self, qh: &QueueHandle<Self>) -> Result<()> {
+        tracing::info!("Reloading configuration");
+
+        // Load new configuration
+        let new_config = match Config::load() {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to load config during reload, keeping current config");
+                return Err(e);
+            }
+        };
+
+        // Check if we need to resize/reposition the surface
+        let size_changed = new_config.panel.width != self.config.panel.width
+            || new_config.panel.height != self.config.panel.height;
+        let position_changed = new_config.panel.position != self.config.panel.position
+            || new_config.panel.margin != self.config.panel.margin;
+
+        // Update theme if changed
+        let theme_changed = new_config.panel.theme != self.config.panel.theme
+            || new_config.panel.background_opacity != self.config.panel.background_opacity;
+
+        if theme_changed {
+            let new_theme = new_config.get_theme();
+            self.renderer = Renderer::with_theme(new_theme);
+            tracing::info!("Theme updated");
+        }
+
+        // Recreate widgets from new config
+        let registry = WidgetRegistry::with_builtins();
+        let mut new_widgets: Vec<Box<dyn Widget>> = Vec::new();
+        let mut new_clock_widget: Option<ClockWidget> = None;
+        let mut new_weather_widget: Option<WeatherWidget> = None;
+
+        for instance in new_config.enabled_widgets() {
+            match registry.create(&instance.widget_type, &instance.config) {
+                Ok(widget) => {
+                    tracing::debug!(
+                        widget_type = %instance.widget_type,
+                        "Created widget from reloaded config"
+                    );
+
+                    // Keep references to clock/weather for legacy rendering
+                    if instance.widget_type == "clock" {
+                        let format = instance
+                            .config
+                            .get("format")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("24h");
+                        let show_seconds = instance
+                            .config
+                            .get("show_seconds")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(true);
+                        let show_date = instance
+                            .config
+                            .get("show_date")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        new_clock_widget = Some(ClockWidget::new(format, show_seconds, show_date));
+                    } else if instance.widget_type == "weather" {
+                        let city = instance
+                            .config
+                            .get("city")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("London");
+                        let api_key = instance
+                            .config
+                            .get("api_key")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let temp_unit = instance
+                            .config
+                            .get("temperature_unit")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("celsius");
+                        let update_interval = instance
+                            .config
+                            .get("update_interval")
+                            .and_then(|v| v.as_integer())
+                            .unwrap_or(600) as u64;
+                        new_weather_widget = Some(WeatherWidget::new(
+                            city,
+                            api_key,
+                            temp_unit,
+                            update_interval,
+                        ));
+                    }
+
+                    new_widgets.push(widget);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        widget_type = %instance.widget_type,
+                        error = %e,
+                        "Failed to create widget during config reload"
+                    );
+                }
+            }
+        }
+
+        // Update widgets
+        self.widgets = new_widgets;
+        self.clock_widget = new_clock_widget;
+        self.weather_widget = new_weather_widget;
+
+        tracing::info!(
+            widget_count = self.widgets.len(),
+            "Widgets recreated from config"
+        );
+
+        // Update config
+        self.config = new_config;
+
+        // Recalculate panel margins
+        let panel_detection = PanelDetection::detect();
+        self.panel_margins = panel_detection.margin_adjustments();
+
+        // Update widget positions for hit-testing
+        self.update_widget_positions();
+
+        // If size or position changed, we need to recreate the Layer Shell surface
+        if size_changed || position_changed {
+            tracing::info!(
+                size_changed = size_changed,
+                position_changed = position_changed,
+                "Surface configuration changed, recreating"
+            );
+
+            // Drop old surface (Wayland cleanup handled automatically)
+            self.layer = None;
+
+            // Update dimensions
+            self.width = self.config.panel.width;
+            self.height = self.config.panel.height;
+
+            // Destroy old buffer pool (will be recreated on next draw)
+            self.buffer_pool = None;
+
+            // Create new surface with updated config
+            self.create_layer_surface(qh);
+
+            // Mark as needing first frame render
+            self.first_frame = true;
+        }
+
+        tracing::info!("Configuration reload complete");
+        Ok(())
+    }
+
     fn draw(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) {
         if !self.configured {
             return;
@@ -644,14 +802,12 @@ impl DesktopWidget {
         // Time the render operation
         let render_timer = Timer::start();
 
-        // Use legacy rendering path (renderer still expects specific widget types)
-        // TODO: Update renderer to use generic Widget trait
-        self.renderer.render(
+        // Use dynamic widget rendering
+        self.renderer.render_dynamic_widgets(
             canvas,
             self.width,
             self.height,
-            self.clock_widget.as_ref(),
-            self.weather_widget.as_ref(),
+            &self.widgets,
             &self.config,
         );
 
@@ -761,6 +917,24 @@ fn main() -> Result<()> {
     // Create the layer surface
     widget.create_layer_surface(&qh);
 
+    // Setup config file watcher for hot-reload
+    let config_watcher = match Config::config_path() {
+        Ok(path) => match ConfigWatcher::new(path) {
+            Ok(watcher) => {
+                tracing::info!("Config file watcher enabled");
+                Some(watcher)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to create config watcher, hot-reload disabled");
+                None
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to get config path, hot-reload disabled");
+            None
+        }
+    };
+
     // Setup event loop
     let mut event_loop =
         calloop::EventLoop::<DesktopWidget>::try_new().context("Failed to create event loop")?;
@@ -770,14 +944,36 @@ fn main() -> Result<()> {
         .insert(event_loop.handle())
         .context("Failed to insert Wayland event source into event loop")?;
 
+    // Store config watcher in a shared state for the timer callback
+    let config_watcher_shared = std::sync::Arc::new(std::sync::Mutex::new(config_watcher));
+
     // Timer for periodic updates - uses dynamic interval based on widget needs
     // Performance optimization: Instead of fixed 100ms polling, we sleep until
     // the next widget actually needs an update. This dramatically reduces CPU
     // usage when idle.
     let timer = calloop::timer::Timer::from_duration(Duration::from_secs(1));
+    let qh_clone = qh.clone();
+    let config_watcher_clone = config_watcher_shared.clone();
     event_loop
         .handle()
-        .insert_source(timer, |_deadline, _metadata, widget| {
+        .insert_source(timer, move |_deadline, _metadata, widget| {
+            // Check for config reload events
+            if let Ok(watcher_guard) = config_watcher_clone.lock() {
+                if let Some(ref watcher) = *watcher_guard {
+                    if let Some(_reload_event) = watcher.try_recv() {
+                        tracing::info!("Config reload triggered by file change");
+
+                        // Reload configuration and update widget state
+                        if let Err(e) = widget.reload_config(&qh_clone) {
+                            tracing::error!(error = %e, "Failed to reload configuration");
+                        } else {
+                            // Force a redraw after config reload
+                            widget.first_frame = true;
+                        }
+                    }
+                }
+            }
+
             // Calculate time until next widget needs updating
             // This is typically 1 second for clock updates, longer for weather
             let next_update = widget.update_scheduler.time_until_next_update();

@@ -7,6 +7,7 @@
 #![warn(missing_docs)]
 
 pub mod config;
+pub mod config_watcher;
 pub mod error;
 pub mod icons;
 pub mod input;
@@ -24,6 +25,7 @@ pub mod widget;
 
 // Re-export commonly used types
 pub use config::{Config, Margin, PanelConfig};
+pub use config_watcher::{ConfigReloadEvent, ConfigWatcher};
 pub use error::{ConfigError, WeatherError, WidgetError};
 pub use input::{
     button_code_to_mouse_button, execute_action, hit_test_widgets, scroll_to_direction, InputState,

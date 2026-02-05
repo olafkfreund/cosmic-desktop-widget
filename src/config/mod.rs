@@ -59,7 +59,7 @@ impl Default for PanelConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Margin {
     pub top: i32,
     pub right: i32,
