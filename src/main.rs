@@ -67,6 +67,7 @@ struct DesktopWidget {
 
     // State
     configured: bool,
+    first_frame: bool,
 }
 
 impl CompositorHandler for DesktopWidget {
@@ -203,6 +204,7 @@ impl DesktopWidget {
             config,
             metrics: WidgetMetrics::new(),
             configured: false,
+            first_frame: true,
         }
     }
 
@@ -257,16 +259,22 @@ impl DesktopWidget {
         let flags = self.update_scheduler.check_updates();
 
         // Only update widgets that need it
-        if flags.clock {
+        if flags.clock || self.first_frame {
             self.clock_widget.update();
         }
-        if flags.weather {
+        if flags.weather || self.first_frame {
             self.weather_widget.update();
         }
 
-        // Only redraw if something changed
-        if !flags.needs_redraw() {
+        // Only redraw if something changed OR this is the first frame
+        if !flags.needs_redraw() && !self.first_frame {
             return;
+        }
+
+        // Mark first frame as rendered
+        if self.first_frame {
+            self.first_frame = false;
+            tracing::info!("Rendering first frame");
         }
 
         // Create buffer pool if needed
